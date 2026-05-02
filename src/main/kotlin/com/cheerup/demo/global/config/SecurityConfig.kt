@@ -5,6 +5,7 @@ import com.cheerup.demo.global.jwt.JwtAuthenticationEntryPoint
 import com.cheerup.demo.global.jwt.JwtAuthenticationFilter
 import com.cheerup.demo.global.jwt.JwtProperties
 import com.cheerup.demo.global.oauth.CustomOAuth2UserService
+import com.cheerup.demo.global.oauth.CustomOidcUserService
 import com.cheerup.demo.global.oauth.OAuth2AuthenticationSuccessHandler
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
@@ -24,6 +25,7 @@ class SecurityConfig(
     private val jwtAuthenticationEntryPoint: JwtAuthenticationEntryPoint,
     private val jwtAccessDeniedHandler: JwtAccessDeniedHandler,
     private val customOAuth2UserService: CustomOAuth2UserService,
+    private val customOidcUserService: CustomOidcUserService,
     private val oAuth2AuthenticationSuccessHandler: OAuth2AuthenticationSuccessHandler,
 ) {
 
@@ -43,7 +45,10 @@ class SecurityConfig(
                 it.anyRequest().authenticated()
             }
             .oauth2Login {
-                it.userInfoEndpoint { endpoint -> endpoint.userService(customOAuth2UserService) }
+                it.userInfoEndpoint { endpoint ->
+                    endpoint.userService(customOAuth2UserService)
+                    endpoint.oidcUserService(customOidcUserService)
+                }
                 it.successHandler(oAuth2AuthenticationSuccessHandler)
             }
             .exceptionHandling {
