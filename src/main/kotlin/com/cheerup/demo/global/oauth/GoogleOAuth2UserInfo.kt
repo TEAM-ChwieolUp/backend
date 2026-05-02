@@ -7,7 +7,7 @@ class GoogleOAuth2UserInfo(
 ) : OAuth2UserInfo {
     override val provider: OAuth2Provider = OAuth2Provider.GOOGLE
     override val providerUserId: String = requireString("sub")
-    override val email: String = requireString("email")
+    override val email: String? = attributes["email"] as? String
     override val name: String? = attributes["name"] as? String
     override val profileImageUrl: String? = attributes["picture"] as? String
 

@@ -4,13 +4,13 @@ import com.cheerup.demo.auth.dto.LoginResponse
 import com.cheerup.demo.auth.service.AuthService
 import com.cheerup.demo.auth.support.RefreshTokenCookieManager
 import com.cheerup.demo.global.response.ApiResponse
-import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.MediaType
 import org.springframework.security.core.Authentication
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler
 import org.springframework.stereotype.Component
+import tools.jackson.databind.ObjectMapper
 
 @Component
 class OAuth2AuthenticationSuccessHandler(
@@ -24,7 +24,7 @@ class OAuth2AuthenticationSuccessHandler(
         response: HttpServletResponse,
         authentication: Authentication,
     ) {
-        val principal = authentication.principal as? OAuth2UserPrincipal
+        val principal = authentication.principal as? OAuth2AuthenticationPrincipal
             ?: throw IllegalStateException("OAuth2 principal is not supported.")
         val loginResult = authService.loginByOAuth2(principal.userInfo)
 

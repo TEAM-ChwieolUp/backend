@@ -20,18 +20,23 @@ class AuthService(
 
     @Transactional
     fun loginByOAuth2(userInfo: OAuth2UserInfo): LoginResult {
+        val email = userInfo.email
+            ?: throw BusinessException(
+                ErrorCode.OAUTH2_EMAIL_NOT_PROVIDED,
+                detail = "provider=${userInfo.provider}, providerUserId=${userInfo.providerUserId}",
+            )
         val user = userRepository.findByOauth2ProviderAndProviderUserId(
             oauth2Provider = userInfo.provider,
             providerUserId = userInfo.providerUserId,
         )?.apply {
-            email = userInfo.email
+            this.email = email
             name = userInfo.name
             profileImageUrl = userInfo.profileImageUrl
         } ?: userRepository.save(
             User(
                 oauth2Provider = userInfo.provider,
                 providerUserId = userInfo.providerUserId,
-                email = userInfo.email,
+                email = email,
                 name = userInfo.name,
                 profileImageUrl = userInfo.profileImageUrl,
             ),
