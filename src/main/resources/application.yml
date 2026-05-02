@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: demo
+  profiles:
+    default: local
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            scope:
+              - openid
+              - profile
+              - email

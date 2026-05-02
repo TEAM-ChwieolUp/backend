@@ -225,11 +225,14 @@ OAuth2 로그인 (Google/Microsoft)
 ## Build & Run
 
 ```bash
+# 로컬 DB 실행
+docker compose up -d
+
 # 빌드
 ./gradlew clean build
 
 # 로컬 실행
-./gradlew bootRun
+./gradlew bootRun --args='--spring.profiles.active=local'
 
 # 전체 테스트
 ./gradlew test
@@ -241,7 +244,7 @@ OAuth2 로그인 (Google/Microsoft)
 ./gradlew ktlintCheck
 ```
 
-> 인프라(MySQL/Redis) Docker Compose 셋업은 아직 추가되지 않았다. 도메인 작업 시작 전 `docker-compose.yml`을 추가하고 본 섹션을 갱신할 것.
+> 현재 로컬 인프라는 `docker-compose.yml`의 MySQL 8 기준으로 맞춘다. Redis는 실제 사용 시점에 추가한다.
 
 ---
 

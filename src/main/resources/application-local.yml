@@ -1,0 +1,20 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+    import:
+      - backend-security/application-security.yml
+
+  datasource:
+    url: jdbc:mysql://localhost:3316/cheerup?serverTimezone=UTC&characterEncoding=UTF-8
+    username: cheerup_local
+    password: cheerup_local_pw
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
