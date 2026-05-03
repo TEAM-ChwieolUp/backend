@@ -4,7 +4,8 @@
       "Bash(./gradlew compileKotlin)",
       "Bash(./gradlew compileKotlin compileTestKotlin --rerun-tasks --no-daemon)",
       "Bash(./gradlew compileKotlin compileTestKotlin --rerun-tasks)",
-      "Bash(./gradlew test *)"
+      "Bash(./gradlew test *)",
+      "Bash(./gradlew compileKotlin --quiet)"
     ]
   },
   "enabledPlugins": {
