@@ -1,0 +1,10 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+app:
+  openapi:
+    servers:
+      - url: ${APP_OPENAPI_PROD_SERVER_URL:https://api.cheerup.example.com}
+        description: Production server

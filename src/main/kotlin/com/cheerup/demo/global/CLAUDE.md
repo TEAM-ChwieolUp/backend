@@ -7,7 +7,8 @@
 | 패키지 | 책임 |
 |---|---|
 | `base/` | `BaseEntity` |
-| `config/` | JPA Auditing 등 Spring 설정 |
+| `config/` | JPA Auditing, Security, OpenAPI/Swagger 등 Spring 설정 |
+| `config/swagger/` | Swagger 공통 응답 문서화 애너테이션/커스터마이저 |
 | `exception/` | `ErrorCode`, `BusinessException`, `GlobalExceptionHandler` |
 | `response/` | `ApiResponse<T>`, `Meta`, `ErrorResponse` |
 
@@ -67,9 +68,11 @@ Controller 반환 기준:
 - 생성처럼 HTTP status를 명시해야 하는 경우: `ResponseEntity<ApiResponse<T>>`
 - 삭제 성공: `204 No Content`를 기본값으로 한다.
 
+Swagger 문서에서는 `ApiResponse<T>` 반환 타입을 기반으로 `{ data, meta }` 구조가 자동 생성된다. 별도의 `FooApiResponseDoc` 같은 문서 전용 wrapper DTO를 만들지 않는다.
+
 ## 실패 응답
 
-실패 응답은 Spring `ProblemDetail`을 사용하지 않고 직접 정의한 `ErrorResponse`를 사용한다. 실패 응답은 성공 응답 wrapper로 감싸지 않는다.
+실패 응답은 직접 정의한 `ErrorResponse`를 사용한다. 실패 응답은 성공 응답 wrapper로 감싸지 않는다.
 
 ```json
 {
@@ -80,6 +83,19 @@ Controller 반환 기준:
   "path": "/api/stages/10"
 }
 ```
+
+Swagger 실패 응답은 도메인 `api/` 인터페이스 메서드의 `@SwaggerErrorResponses`에 선언한 `ErrorCode`를 기반으로 자동 생성된다. 같은 HTTP status의 여러 오류 코드는 하나의 응답 아래 examples로 묶인다.
+
+```kotlin
+@SwaggerErrorResponses(
+    errors = [
+        SwaggerErrorResponse(ErrorCode.UNAUTHORIZED),
+        SwaggerErrorResponse(ErrorCode.USER_NOT_FOUND),
+    ],
+)
+```
+
+인증이 필요한 API는 해당 메서드에만 `@SecurityRequirement(name = "bearerAuth")`를 붙인다. 같은 도메인 안에 공개 API와 인증 API가 섞일 수 있으므로 인터페이스 전체에 붙이지 않는다.
 
 ```kotlin
 data class ErrorResponse(
@@ -159,11 +175,13 @@ val stage = stageRepository.findByIdAndUserId(stageId, userId)
 ## 새 도메인 추가 체크리스트
 
 1. 필요한 에러 코드를 `ErrorCode`에 `[DOMAIN]_[REASON]` 형태로 추가한다.
-2. 엔티티는 `BaseEntity`를 상속한다.
-3. 사용자 소유 리소스에는 `userId: Long` 컬럼과 인덱스를 둔다.
-4. Repository에는 `findByIdAndUserId` 패턴을 둔다.
-5. Service에서 소유권을 검증하고 `BusinessException`을 던진다.
-6. Controller는 `ApiResponse<T>` 반환과 HTTP 매핑만 담당한다.
+2. 도메인 `api/` 패키지에 Swagger 문서 인터페이스를 작성한다.
+3. `api/` 인터페이스에는 `@Tag`, `@Operation`, `@SwaggerErrorResponses`, 필요한 메서드 단위 `@SecurityRequirement`만 둔다.
+4. 엔티티는 `BaseEntity`를 상속한다.
+5. 사용자 소유 리소스에는 `userId: Long` 컬럼과 인덱스를 둔다.
+6. Repository에는 `findByIdAndUserId` 패턴을 둔다.
+7. Service에서 소유권을 검증하고 `BusinessException`을 던진다.
+8. Controller는 도메인 `api` 인터페이스를 구현하고, `ApiResponse<T>` 반환과 HTTP 매핑/실행 로직만 담당한다.
 
 ## 시간 처리
 
