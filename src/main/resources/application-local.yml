@@ -20,6 +20,9 @@ spring:
         format_sql: true
 
 app:
+  auth:
+    refresh-token-cookie:
+      secure: false
   openapi:
     servers:
       - url: http://localhost:8080
