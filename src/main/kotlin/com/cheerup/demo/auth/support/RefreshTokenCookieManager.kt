@@ -8,7 +8,9 @@ import org.springframework.stereotype.Component
 import java.time.Duration
 
 @Component
-class RefreshTokenCookieManager {
+class RefreshTokenCookieManager(
+    private val refreshTokenCookieProperties: RefreshTokenCookieProperties,
+) {
 
     fun addCookie(
         response: HttpServletResponse,
@@ -19,8 +21,8 @@ class RefreshTokenCookieManager {
             HttpHeaders.SET_COOKIE,
             ResponseCookie.from(COOKIE_NAME, token)
                 .httpOnly(true)
-                .secure(true)
-                .sameSite("Strict")
+                .secure(refreshTokenCookieProperties.secure)
+                .sameSite(refreshTokenCookieProperties.sameSite)
                 .path("/")
                 .maxAge(Duration.ofSeconds(maxAgeSeconds))
                 .build()
@@ -33,8 +35,8 @@ class RefreshTokenCookieManager {
             HttpHeaders.SET_COOKIE,
             ResponseCookie.from(COOKIE_NAME, "")
                 .httpOnly(true)
-                .secure(true)
-                .sameSite("Strict")
+                .secure(refreshTokenCookieProperties.secure)
+                .sameSite(refreshTokenCookieProperties.sameSite)
                 .path("/")
                 .maxAge(Duration.ZERO)
                 .build()
