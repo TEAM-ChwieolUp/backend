@@ -36,7 +36,7 @@ enum class StageCategory {
 
 `category`는 시스템 의미. 마감 알림은 `IN_PROGRESS` 카드에만 발송, 합격률 통계는 `PASSED` 비율 등에 사용.
 
-`PASSED`/`REJECTED`는 가입 시 시드되는 "최종 합격"/"불합격" Stage 전용이며, 이 두 Stage는 **삭제 불가 고정 단계**다 (이름/색상/순서는 변경 가능). 사용자가 신규로 추가하는 Stage는 항상 `IN_PROGRESS`로 생성된다 — API에서 `category`를 받지 않음.
+`PASSED`/`REJECTED`는 가입 시 시드되는 "최종 합격"/"불합격" Stage 전용이며, 이 두 Stage는 **삭제 불가 + 순서 변경 불가 고정 단계**다 (이름/색상은 변경 가능). 두 Stage는 항상 보드의 가장 오른쪽 두 자리(`PASSED` → `REJECTED` 순)를 차지하고, 사용자가 신규 `IN_PROGRESS` Stage를 추가하면 두 자리는 자동으로 한 칸 오른쪽으로 밀린다. 사용자가 신규로 추가하는 Stage는 항상 `IN_PROGRESS`로 생성된다 — API에서 `category`를 받지 않음.
 
 ### Application — 지원 카드
 
@@ -100,6 +100,7 @@ enum class Priority { LOW, NORMAL, HIGH }
 | `User` 삭제 | DB FK CASCADE | 모든 도메인 엔티티 자동 |
 | `Application` 삭제 | DB FK CASCADE + Service 명시 혼합 | `ApplicationTag`/`Retrospective`는 자동, `ScheduleEvent`는 Service에서 (외부 시스템 정리 필요) |
 | `Stage` 삭제 | Service 검증 — **`PASSED`/`REJECTED` 카테고리는 삭제 불가**, 그 외에는 비어있을 때만 삭제 | 고정 단계는 `STAGE_FIXED` (409), 카드 ≥1개면 `STAGE_NOT_EMPTY` (409) |
+| `Stage` 순서 변경 | Service 검증 — **`PASSED`/`REJECTED`는 displayOrder 변경 불가**, IN_PROGRESS는 PASSED 위치 미만으로만 이동 | 위반 시 `STAGE_ORDER_PROTECTED` (409) |
 | `Tag` 삭제 | DB FK CASCADE | `ApplicationTag` 자동 |
 
 ```kotlin
@@ -166,17 +167,16 @@ fun deleteStage(userId: Long, stageId: Long) {
 
 ## Stage 시드
 
-신규 가입 시 `StageSeedService.seedDefault(userId)` 호출 — `user/` 도메인의 회원가입 흐름에서 트리거.
+신규 가입 시 `StageSeedService.seedDefault(userId)` 호출 — `auth/` 도메인의 OAuth2 신규 사용자 분기에서 트리거.
 
-| order | name | category | 삭제 |
-|---|---|---|---|
-| 0 | 관심 기업 | IN_PROGRESS | 가능 |
-| 1 | 서류 전형 | IN_PROGRESS | 가능 |
-| 2 | 면접 | IN_PROGRESS | 가능 |
-| 3 | 최종 합격 | PASSED | **고정 — 삭제 불가** |
-| 4 | 불합격 | REJECTED | **고정 — 삭제 불가** |
+| order | name | category | 삭제 | 순서 변경 |
+|---|---|---|---|---|
+| 0 | 최종 합격 | PASSED | **불가 — 고정** | **불가 — 항상 우측 두 자리 보존** |
+| 1 | 불합격 | REJECTED | **불가 — 고정** | **불가 — 항상 우측 두 자리 보존** |
 
-`IN_PROGRESS` 카테고리 시드 단계(관심 기업/서류 전형/면접)는 일반 Stage와 동일하게 이름/색상/순서/삭제 모두 자유. 사용자가 새로 추가하는 Stage 역시 항상 `IN_PROGRESS`로 생성된다 (API에 `category` 입력 없음).
+기본 시드는 `PASSED`/`REJECTED` 두 Stage뿐이다. 진행 단계(서류/면접 등)는 사용자마다 다르므로 시드하지 않고 사용자가 직접 추가한다. 새로 추가되는 Stage는 항상 `IN_PROGRESS`로 생성되며 (API에 `category` 입력 없음), 보드의 가장 오른쪽 — 즉 `PASSED` 직전 자리 — 에 삽입된다. 이때 `PASSED`/`REJECTED`는 자동으로 한 칸씩 오른쪽으로 시프트되어 "고정 단계는 항상 가장 오른쪽 두 자리" 불변식이 유지된다.
+
+사용자가 PATCH로 IN_PROGRESS Stage의 `displayOrder`를 변경할 때도 `PASSED`/`REJECTED`보다 오른쪽 위치는 거부된다 (`STAGE_ORDER_PROTECTED`, 409). `PASSED`/`REJECTED` 자체의 `displayOrder` 변경 시도도 동일 코드로 거부.
 
 ## 단계 전이 검증
 
