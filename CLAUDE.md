@@ -67,7 +67,7 @@
 ### API 공통 규칙
 
 - **응답 형식**: `{ "data": {...}, "meta": { "timestamp": "...", "requestId": "..." } }`
-- **오류 응답**: RFC 7807 Problem Details 표준
+- **오류 응답**: `ErrorResponse` (`code`, `message`, `detail`, `timestamp`, `path`)
 - **인증**: 모든 API는 JWT Bearer 토큰 필수 (`/api/auth/*` 제외)
 
 ### 오류 코드
@@ -105,6 +105,7 @@
 | 테스트 | JUnit 5, MockK, Spring Boot Test, Testcontainers (MySQL 8, Redis) |
 | 정적 분석 | Ktlint |
 | 직렬화 | `jackson-module-kotlin` |
+| API 문서 | Springdoc OpenAPI 3.x, Swagger UI |
 
 ### 프로젝트 구조 (목표)
 
@@ -119,7 +120,7 @@ src/main/kotlin/com/cheerup/demo/
 │   ├── exception/             # GlobalExceptionHandler, BusinessException, ErrorCode
 │   ├── jwt/                   # JwtProvider, JwtAuthenticationFilter
 │   ├── oauth/                 # OAuth2 (Google, Microsoft) 연동
-│   ├── response/              # ApiResponse, Meta, ProblemDetails
+│   ├── response/              # ApiResponse, Meta, ErrorResponse
 │   └── scheduler/             # 마감 알림 스케줄러
 │
 ├── application/               # 채용 칸반 보드
@@ -132,7 +133,7 @@ src/main/kotlin/com/cheerup/demo/
 └── user/                      # 사용자 프로필
 ```
 
-각 도메인 모듈은 `controller/ → service/ → repository/ → domain/ → dto/` 계층 구조를 따른다.
+각 도메인 모듈은 `api/ → controller/ → service/ → repository/ → domain/ → dto/` 계층 구조를 따른다. `api/`는 Swagger/OpenAPI 문서 인터페이스를, `controller/`는 실제 요청 처리 로직을 담당한다.
 
 ### 아키텍처 패턴
 
@@ -169,8 +170,18 @@ fun accept(suggestionId: Long, userId: Long) {
 #### 표준 응답 형식
 ```kotlin
 ApiResponse.success(data)          // { data, meta }
-ApiResponse.failure(ErrorCode.X)   // RFC 7807 Problem Details
+// 실패 응답은 GlobalExceptionHandler/JWT 핸들러가 ErrorResponse로 반환
 ```
+
+#### Swagger/OpenAPI 문서화
+- Swagger UI: `/swagger-ui.html`
+- OpenAPI JSON: `/v3/api-docs`
+- 서버 URL은 `app.openapi.servers`를 프로파일별 설정(`local`, `dev`, `prod`)에서 주입한다.
+- 문서화 애너테이션은 Controller에 직접 붙이지 않고 각 도메인의 `api/` 인터페이스에 작성한다.
+- `@Tag`는 API 인터페이스 단위로, `@Operation`과 `@SwaggerErrorResponses`는 메서드 단위로 작성한다.
+- `@SecurityRequirement(name = "bearerAuth")`는 같은 도메인 안에서도 인증이 필요한 메서드에만 붙인다.
+- 성공 응답은 `ApiResponse<T>` 반환 타입을 기반으로 `{ data, meta }` 구조가 자동 문서화된다.
+- 실패 응답은 `@SwaggerErrorResponses`에 선언한 `ErrorCode` 기반으로 `ErrorResponse` 예시가 자동 생성된다.
 
 #### 예외 처리
 - `GlobalExceptionHandler`(`@RestControllerAdvice`)에서 전역 처리
@@ -258,11 +269,11 @@ OAuth2 로그인 (Google/Microsoft)
 
 ## Development Checklist
 
-1. 도메인 모듈 구조 준수: `controller/ → service/ → repository/ → domain/ → dto/`
+1. 도메인 모듈 구조 준수: `api/ → controller/ → service/ → repository/ → domain/ → dto/`
 2. 모든 신규 코드는 Kotlin으로 작성 (Java 파일 추가 금지)
 3. 인증 필요 엔드포인트에는 `@CurrentUser` + `@PreAuthorize` 적용
 4. `@Transactional` 적절히 적용 (조회 전용은 `readOnly = true`)
-5. 응답은 `ApiResponse`로 표준화, 오류는 `ErrorCode` enum + RFC 7807
+5. 응답은 `ApiResponse`로 표준화, 오류는 `ErrorCode` enum + `ErrorResponse`
 6. **모든 API에서 `userId` 소유권 검증 필수** (IDOR 방지)
 7. **AI 결과는 절대 DB에 직접 반영하지 말 것** — 항상 `Suggestion`으로 저장 후 사용자 수락을 거칠 것
 8. **채용 메일 본문은 절대 저장하지 말 것** — LLM 호출 후 메모리에서 즉시 폐기
@@ -271,4 +282,5 @@ OAuth2 로그인 (Google/Microsoft)
 11. 시간/마감일은 서버 시각(UTC) 기준으로 저장, 프론트에서 타임존 변환
 12. LLM 비용 통제 — Rate Limit(계정당 100회/일) 및 GPT-4o-mini 우선 사용 원칙 준수
 13. JPA 엔티티는 `class`(open) + `var`, DTO는 `data class` + `val` 컨벤션 준수
-14. 새 도메인 추가 시 본 문서의 "도메인 요약" 표와 "엔드포인트" 표 갱신
+14. 새 API 추가 시 도메인 `api/` 인터페이스에 `@Operation`, `@SwaggerErrorResponses`, 필요한 경우 `@SecurityRequirement`를 작성
+15. 새 도메인 추가 시 본 문서의 "도메인 요약" 표와 "엔드포인트" 표 갱신
