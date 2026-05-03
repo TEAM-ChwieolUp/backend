@@ -1,5 +1,7 @@
 HELP.md
 .gradle
+.gradle-user-home/
+.kotlin/
 build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
@@ -25,6 +27,10 @@ bin/
 out/
 !**/src/main/**/out/
 !**/src/test/**/out/
+
+### JVM crash logs ###
+hs_err_pid*.log
+replay_pid*.log
 
 ### NetBeans ###
 /nbproject/private/

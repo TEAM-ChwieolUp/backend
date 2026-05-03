@@ -7,10 +7,6 @@ enum class ErrorCode(
     val code: String,
     val message: String,
 ) {
-    INVALID_INPUT(HttpStatus.BAD_REQUEST, "INVALID_INPUT", "Invalid request value."),
-    UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "Authentication is required."),
-    FORBIDDEN(HttpStatus.FORBIDDEN, "FORBIDDEN", "Access is denied."),
-    RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "Too many requests."),
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "INVALID_INPUT", "요청 값이 올바르지 않습니다."),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "인증이 필요합니다."),
     FORBIDDEN(HttpStatus.FORBIDDEN, "FORBIDDEN", "권한이 없습니다."),
@@ -27,6 +23,11 @@ enum class ErrorCode(
     STAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "STAGE_NOT_FOUND", "Stage was not found."),
     STAGE_NOT_EMPTY(HttpStatus.CONFLICT, "STAGE_NOT_EMPTY", "Stage still has applications."),
     STAGE_FIXED(HttpStatus.CONFLICT, "STAGE_FIXED", "Fixed stages cannot be deleted."),
+    STAGE_ORDER_PROTECTED(
+        HttpStatus.CONFLICT,
+        "STAGE_ORDER_PROTECTED",
+        "Fixed stages must remain rightmost. Their order cannot change, and other stages cannot move past them.",
+    ),
     TAG_NOT_FOUND(HttpStatus.NOT_FOUND, "TAG_NOT_FOUND", "Tag was not found."),
     TAG_DUPLICATE(HttpStatus.CONFLICT, "TAG_DUPLICATE", "Tag name already exists."),
     RETROSPECTIVE_NOT_FOUND(HttpStatus.NOT_FOUND, "RETROSPECTIVE_NOT_FOUND", "Retrospective was not found."),

@@ -43,9 +43,9 @@ dependencies {
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-// JPA 엔티티는 Hibernate 프록시를 위해 open이어야 함
-// kotlin-spring은 Spring 어노테이션만 open 처리하므로 JPA 어노테이션을 추가
+// Kotlin classes are final by default, so proxy-backed Spring/JPA types must be open.
 allOpen {
+	annotation("org.springframework.transaction.annotation.Transactional")
 	annotation("jakarta.persistence.Entity")
 	annotation("jakarta.persistence.MappedSuperclass")
 	annotation("jakarta.persistence.Embeddable")
