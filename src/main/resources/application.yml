@@ -12,3 +12,18 @@ spring:
               - openid
               - profile
               - email
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+app:
+  openapi:
+    title: CheerUp API
+    description: ChwieolUp backend API documentation
+    version: v1
+    servers:
+      - url: http://localhost:8080
+        description: Local server
