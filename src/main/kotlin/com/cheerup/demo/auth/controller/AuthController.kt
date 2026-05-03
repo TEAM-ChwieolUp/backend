@@ -1,5 +1,6 @@
 package com.cheerup.demo.auth.controller
 
+import com.cheerup.demo.auth.api.AuthApi
 import com.cheerup.demo.auth.dto.LoginResponse
 import com.cheerup.demo.auth.service.AuthService
 import com.cheerup.demo.auth.support.RefreshTokenCookieManager
@@ -17,10 +18,10 @@ import org.springframework.web.bind.annotation.RestController
 class AuthController(
     private val authService: AuthService,
     private val refreshTokenCookieManager: RefreshTokenCookieManager,
-) {
+) : AuthApi {
 
     @PostMapping("/refresh")
-    fun refresh(
+    override fun refresh(
         request: HttpServletRequest,
         response: HttpServletResponse,
     ): ApiResponse<LoginResponse> {
