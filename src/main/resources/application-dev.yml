@@ -1,0 +1,10 @@
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+app:
+  openapi:
+    servers:
+      - url: ${APP_OPENAPI_DEV_SERVER_URL:https://dev-api.cheerup.example.com}
+        description: Development server
