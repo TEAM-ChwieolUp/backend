@@ -1,5 +1,6 @@
 package com.cheerup.demo.auth.service
 
+import com.cheerup.demo.application.service.StageSeedService
 import com.cheerup.demo.auth.dto.LoginResult
 import com.cheerup.demo.auth.dto.UserSummary
 import com.cheerup.demo.global.exception.BusinessException
@@ -16,6 +17,7 @@ class AuthService(
     private val userRepository: UserRepository,
     private val refreshTokenService: RefreshTokenService,
     private val jwtProvider: JwtProvider,
+    private val stageSeedService: StageSeedService,
 ) {
 
     @Transactional
@@ -25,22 +27,32 @@ class AuthService(
                 ErrorCode.OAUTH2_EMAIL_NOT_PROVIDED,
                 detail = "provider=${userInfo.provider}, providerUserId=${userInfo.providerUserId}",
             )
-        val user = userRepository.findByOauth2ProviderAndProviderUserId(
+        val existing = userRepository.findByOauth2ProviderAndProviderUserId(
             oauth2Provider = userInfo.provider,
             providerUserId = userInfo.providerUserId,
-        )?.apply {
-            this.email = email
-            name = userInfo.name
-            profileImageUrl = userInfo.profileImageUrl
-        } ?: userRepository.save(
-            User(
-                oauth2Provider = userInfo.provider,
-                providerUserId = userInfo.providerUserId,
-                email = email,
-                name = userInfo.name,
-                profileImageUrl = userInfo.profileImageUrl,
-            ),
         )
+
+        val user = if (existing != null) {
+            existing.apply {
+                this.email = email
+                name = userInfo.name
+                profileImageUrl = userInfo.profileImageUrl
+            }
+        } else {
+            val created = userRepository.save(
+                User(
+                    oauth2Provider = userInfo.provider,
+                    providerUserId = userInfo.providerUserId,
+                    email = email,
+                    name = userInfo.name,
+                    profileImageUrl = userInfo.profileImageUrl,
+                ),
+            )
+            // 신규 사용자에게 고정 Stage(PASSED/REJECTED)를 시드. 이게 없으면
+            // 카드 생성 시 stageId 검증이 항상 실패해 신규 가입자가 차단된다.
+            stageSeedService.seedDefault(requireNotNull(created.id) { "User id must not be null after save." })
+            created
+        }
 
         return issueTokens(user)
     }

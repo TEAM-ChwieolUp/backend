@@ -1,4 +1,15 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew compileKotlin)",
+      "Bash(./gradlew compileKotlin compileTestKotlin --rerun-tasks --no-daemon)",
+      "Bash(./gradlew compileKotlin compileTestKotlin --rerun-tasks)",
+      "Bash(./gradlew test *)",
+      "Bash(./gradlew compileKotlin --quiet)",
+      "Bash(./gradlew compileKotlin --rerun-tasks)",
+      "Bash(./gradlew compileKotlin *)"
+    ]
+  },
   "enabledPlugins": {
     "code-review@claude-plugins-official": true,
     "skill-creator@claude-plugins-official": true

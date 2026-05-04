@@ -1,6 +1,6 @@
 # schedule — 3레이어 통합 달력
 
-채용공고 마감 / 채용 전형 / 개인 일정의 3가지 카테고리를 단일 달력 UI에 통합 표시.
+채용공고 데이터 / 채용 전형 / 개인 일정의 3가지 카테고리를 단일 달력 UI에 통합 표시.
 
 ## 엔티티
 
@@ -15,14 +15,10 @@
 | `title` | `String` | NOT NULL |
 | `startAt` | `Instant` | NOT NULL, INDEX (월별 조회용) |
 | `endAt` | `Instant?` | |
-| `allDay` | `Boolean` | NOT NULL, default false |
-| `location` | `String?` | |
-| `memo` | `String?` (TEXT) | |
-| `externalCalendarId` | `String?` | Google/Outlook export 후 외부 ID |
 
 ```kotlin
 enum class ScheduleCategory {
-    JOB_POSTING,            // 채용공고 마감 — 저장 안 함, Application.deadlineAt에서 변환
+    JOB_POSTING,            // 채용공고 데이터 (마감/접수 시작/설명회 등) — DB 저장, applicationId 필수
     APPLICATION_PROCESS,    // 채용 전형 (면접/코테/발표)
     PERSONAL,               // 개인 일정
 }
@@ -32,29 +28,26 @@ enum class ScheduleCategory {
 
 | 카테고리 | DB 저장 여부 | 출처 | `applicationId` |
 |---|---|---|---|
-| `JOB_POSTING` | ❌ 저장 안 함 | `Application.deadlineAt` | 응답 시 매핑 |
+| `JOB_POSTING` | ✅ `ScheduleEvent` | 사용자 수동 등록 또는 메일에서 추출 (`Application.deadlineAt` 변경 시 Service가 동기화) | NOT NULL |
 | `APPLICATION_PROCESS` | ✅ `ScheduleEvent` | 사용자 수동 등록 또는 메일에서 추출 | NOT NULL |
 | `PERSONAL` | ✅ `ScheduleEvent` | 사용자 수동 등록 | null |
 
-## 마감일이 저장 안 되는 이유
+## 채용공고 일정 저장 정책
 
-`Application.deadlineAt`이 마감일 **원본**.
-달력 API는 사용자 카드들의 `deadlineAt`을 읽어 `JOB_POSTING` 이벤트로 **변환만** 해서 응답.
+`JOB_POSTING`은 일반 `ScheduleEvent` row로 DB에 저장된다. 마감일은 그중 가장 흔한 형태이고, 이 외에도 접수 시작일·설명회 등 채용공고 관련 일정을 같은 카테고리에 담는다.
 
-중복 저장 시 동기화 실패(`Application.deadlineAt` 수정 ≠ 달력 row 수정) 위험을 피하기 위함.
+`Application.deadlineAt`은 칸반 측 마감 정렬·알림 폴링용 컬럼으로 별도 유지되며, 달력 표시용 `JOB_POSTING` row와는 **Service 계층에서 단일 트랜잭션으로 동기화**한다.
+
+- `Application` 생성 시 `deadlineAt`이 있으면 매칭 `JOB_POSTING` row 1건도 함께 생성
+- `Application.deadlineAt` 변경 → 매칭 row의 `startAt` 갱신
+- `Application.deadlineAt` null로 변경 → 매칭 row 삭제
+- `Application` 삭제 → 연결된 모든 JOB_POSTING row도 삭제 (`schedule/`의 `deleteByApplicationId`가 처리)
 
 ```kotlin
-fun getCalendar(userId: Long, from: Instant, to: Instant): List<CalendarEventResponse> {
-    val deadlines = applicationRepository
-        .findWithDeadlineBetween(userId, from, to)
-        .map { it.toJobPostingEvent() }                     // 변환만, 저장 X
-
-    val events = scheduleEventRepository
+fun getCalendar(userId: Long, from: Instant, to: Instant): List<CalendarEventResponse> =
+    scheduleEventRepository
         .findByUserIdAndStartAtBetween(userId, from, to)
         .map { it.toResponse() }
-
-    return deadlines + events
-}
 ```
 
 ## 삭제 정책
@@ -62,14 +55,13 @@ fun getCalendar(userId: Long, from: Instant, to: Instant): List<CalendarEventRes
 | 트리거 | 결과 |
 |---|---|
 | `User` 삭제 | DB FK CASCADE로 자동 |
-| `Application` 삭제 | **Service 명시 정리** — 외부 캘린더 export 취소 + Redis 알림 큐 비움 + DB hard delete |
-| 사용자 일정 직접 삭제 | hard delete + 외부 캘린더 정리 + 알림 큐 정리 |
+| `Application` 삭제 | **Service 명시 정리** — Redis 알림 큐 비움 + DB hard delete |
+| 사용자 일정 직접 삭제 | hard delete + 알림 큐 정리 |
 
 ```kotlin
 @Transactional
 fun deleteByApplicationId(applicationId: Long) {
     val events = scheduleEventRepository.findByApplicationId(applicationId)
-    events.forEach { calendarExporter.cancelExternalExport(it) }
     scheduleEventRepository.deleteAll(events)
     notificationQueue.removeByApplicationId(applicationId)
 }
@@ -79,14 +71,16 @@ fun deleteByApplicationId(applicationId: Long) {
 
 ## 외부 캘린더 export
 
+iCalendar(`.ics`) **일회성 다운로드** 모델. 외부 시스템과의 양방향 동기화는 하지 않는다.
+
 ```
-사용자 → POST /api/schedule/events/{id}/export?provider=google
-  → Google Calendar Insert API 호출
-  → externalCalendarId 저장
-  → 이후 일정 수정/삭제 시 외부 캘린더에도 반영
+사용자 → GET /api/schedule/events/{id}/export
+  → Service가 ScheduleEvent → iCalendar(VEVENT) 직렬화
+  → Content-Type: text/calendar 로 .ics 파일 응답
+  → 사용자는 받은 파일을 Google Calendar / Outlook에 직접 import
 ```
 
-`externalCalendarId`가 채워져 있으면 export 됨. 사용자가 export 취소 시 외부 캘린더에서도 삭제.
+DB에 외부 시스템 ID를 추적하지 않으므로 같은 이벤트를 여러 번 export 해도 매번 새 `.ics`가 생성된다. 이후 `ScheduleEvent`가 수정·삭제돼도 이미 import 된 외부 일정에는 반영되지 않음 — 양방향 동기화가 필요해지면 별도 도메인으로 분리해서 다룬다.
 
 ## 알림 연동
 
@@ -119,17 +113,6 @@ class ScheduleEvent(
     var startAt: Instant,
 
     var endAt: Instant? = null,
-
-    @Column(nullable = false)
-    var allDay: Boolean = false,
-
-    var location: String? = null,
-
-    @Column(columnDefinition = "TEXT")
-    var memo: String? = null,
-
-    @Column(name = "external_calendar_id")
-    var externalCalendarId: String? = null,
 ) : BaseEntity() {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -140,9 +123,6 @@ class ScheduleEvent(
         this.startAt = startAt
         this.endAt = endAt
     }
-
-    fun linkExternal(externalId: String) { this.externalCalendarId = externalId }
-    fun unlinkExternal() { this.externalCalendarId = null }
 }
 ```
 
@@ -160,11 +140,11 @@ class ScheduleEvent(
 | POST | `/api/schedule/events` | 일정 등록 (`APPLICATION_PROCESS` 또는 `PERSONAL`) |
 | PATCH | `/api/schedule/events/{id}` | 일정 수정 |
 | DELETE | `/api/schedule/events/{id}` | 일정 삭제 |
-| POST | `/api/schedule/events/{id}/export` | 외부 캘린더로 export (provider 지정) |
+| GET | `/api/schedule/events/{id}/export` | iCalendar(`.ics`) 파일 다운로드 (외부 캘린더 import용) |
 
 ## 검증 규칙 (Service)
 
-- `category = JOB_POSTING`인 row는 직접 생성/수정 금지 (`INVALID_INPUT`)
-- `category = APPLICATION_PROCESS`인 경우 `applicationId` 필수
+- `category = JOB_POSTING` 또는 `APPLICATION_PROCESS`인 경우 `applicationId` 필수 (없으면 `INVALID_INPUT`)
 - `category = PERSONAL`인 경우 `applicationId`는 null
+- 모든 카테고리에서 `applicationId`는 동일 `userId` 소유의 Application이어야 함 (IDOR 방지)
 - `endAt < startAt`이면 `INVALID_INPUT`

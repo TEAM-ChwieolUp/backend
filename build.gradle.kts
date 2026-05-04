@@ -27,6 +27,7 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-security")
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
+	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3")
 	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 	implementation("io.jsonwebtoken:jjwt-api:0.12.7")
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3")
@@ -43,9 +44,9 @@ dependencies {
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-// JPA 엔티티는 Hibernate 프록시를 위해 open이어야 함
-// kotlin-spring은 Spring 어노테이션만 open 처리하므로 JPA 어노테이션을 추가
+// Kotlin classes are final by default, so proxy-backed Spring/JPA types must be open.
 allOpen {
+	annotation("org.springframework.transaction.annotation.Transactional")
 	annotation("jakarta.persistence.Entity")
 	annotation("jakarta.persistence.MappedSuperclass")
 	annotation("jakarta.persistence.Embeddable")
