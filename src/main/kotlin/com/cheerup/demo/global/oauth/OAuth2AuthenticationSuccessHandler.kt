@@ -1,22 +1,18 @@
 package com.cheerup.demo.global.oauth
 
-import com.cheerup.demo.auth.dto.LoginResponse
 import com.cheerup.demo.auth.service.AuthService
 import com.cheerup.demo.auth.support.RefreshTokenCookieManager
-import com.cheerup.demo.global.response.ApiResponse
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
-import org.springframework.http.MediaType
 import org.springframework.security.core.Authentication
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler
 import org.springframework.stereotype.Component
-import tools.jackson.databind.ObjectMapper
 
 @Component
 class OAuth2AuthenticationSuccessHandler(
     private val authService: AuthService,
     private val refreshTokenCookieManager: RefreshTokenCookieManager,
-    private val objectMapper: ObjectMapper,
+    private val oAuth2RedirectProperties: OAuth2RedirectProperties,
 ) : AuthenticationSuccessHandler {
 
     override fun onAuthenticationSuccess(
@@ -34,16 +30,6 @@ class OAuth2AuthenticationSuccessHandler(
             maxAgeSeconds = loginResult.refreshTokenMaxAgeSeconds,
         )
 
-        response.contentType = MediaType.APPLICATION_JSON_VALUE
-        response.characterEncoding = Charsets.UTF_8.name()
-        objectMapper.writeValue(
-            response.writer,
-            ApiResponse.success(
-                LoginResponse(
-                    accessToken = loginResult.accessToken,
-                    user = loginResult.user,
-                ),
-            ),
-        )
+        response.sendRedirect(oAuth2RedirectProperties.successRedirectUri)
     }
 }
