@@ -17,7 +17,6 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
 @Service
-@Transactional(readOnly = true)
 class RetrospectiveTemplateService(
     private val retrospectiveTemplateRepository: RetrospectiveTemplateRepository,
     private val retrospectiveRepository: RetrospectiveRepository,
@@ -25,10 +24,12 @@ class RetrospectiveTemplateService(
     @Lazy private val self: RetrospectiveTemplateService,
 ) {
 
+    @Transactional(readOnly = true)
     fun list(userId: Long): List<RetrospectiveTemplateResponse> =
         retrospectiveTemplateRepository.findAllByUserIdOrderByIdAsc(userId)
             .map { it.toResponse() }
 
+    @Transactional(readOnly = true)
     fun get(userId: Long, templateId: Long): RetrospectiveTemplateResponse =
         findOwnedTemplate(userId, templateId).toResponse()
 
