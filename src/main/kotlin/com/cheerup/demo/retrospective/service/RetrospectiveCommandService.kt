@@ -19,7 +19,6 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
 @Service
-@Transactional(readOnly = true)
 class RetrospectiveCommandService(
     private val retrospectiveRepository: RetrospectiveRepository,
     private val applicationRepository: ApplicationRepository,
