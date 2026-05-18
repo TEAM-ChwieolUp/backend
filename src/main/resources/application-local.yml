@@ -12,7 +12,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
-      ddl-auto: create
+      ddl-auto: update
     open-in-view: false
     show-sql: true
     properties:
@@ -25,6 +25,32 @@ app:
       success-redirect-uri: http://localhost:3000/auth/callback
     refresh-token-cookie:
       secure: false
+  mail:
+    classifier:
+      mode: stub
+    clients:
+      google: gmail
+      naver: disabled
+      outlook: disabled
+    gmail:
+      message-query: newer_than:30d
+      max-results: 50
+      token-refresh-skew-seconds: 60
+    oauth:
+      state-ttl-minutes: 10
+      frontend-success-redirect-uri: http://localhost:3000/mail/integrations/success
+      frontend-failure-redirect-uri: http://localhost:3000/mail/integrations/failure
+      providers:
+        google:
+          redirect-uri: http://localhost:8080/api/mail/integrations/oauth/google/callback
+          authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
+          token-uri: https://oauth2.googleapis.com/token
+          user-info-uri: https://openidconnect.googleapis.com/v1/userinfo
+          scopes:
+            - openid
+            - email
+            - profile
+            - https://www.googleapis.com/auth/gmail.readonly
   openapi:
     servers:
       - url: http://localhost:8080

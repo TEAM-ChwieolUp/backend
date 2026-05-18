@@ -70,6 +70,7 @@ class SecurityConfig(
             .authorizeHttpRequests {
                 it.requestMatchers(
                     "/api/auth/**",
+                    "/api/mail/integrations/oauth/*/callback",
                     "/oauth2/**",
                     "/login/**",
                     "/swagger-ui.html",
