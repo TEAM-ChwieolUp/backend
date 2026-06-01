@@ -1,0 +1,16 @@
+.git
+.github
+.gradle
+.gradle-user-home
+.idea
+.kotlin
+build
+docs
+src/main/resources/backend-security
+out
+*.iml
+*.iws
+*.ipr
+*.log
+hs_err_pid*
+replay_pid*
