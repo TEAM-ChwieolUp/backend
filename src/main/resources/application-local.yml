@@ -3,7 +3,7 @@ spring:
     activate:
       on-profile: local
     import:
-      - backend-security/application-security.yml
+      - optional:backend-security/application-security.yml
 
   datasource:
     url: jdbc:mysql://localhost:3316/cheerup?serverTimezone=UTC&characterEncoding=UTF-8
