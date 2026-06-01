@@ -100,6 +100,8 @@ jobs:
           set -e
           mkdir -p deploy/package
           cp deploy/docker-compose.dev.yml deploy/package/docker-compose.dev.yml
+          mkdir -p deploy/package/nginx
+          cp -R deploy/nginx/conf.d deploy/package/nginx/conf.d
           cp src/main/resources/backend-security/application-security.yml deploy/package/application-security.yml
           ruby <<'RUBY'
           require "yaml"
@@ -116,11 +118,9 @@ jobs:
           datasource = dev.dig("spring", "datasource") || {}
           deploy = dev["deploy"] || {}
           mysql = deploy["mysql"] || {}
-          app = deploy["app"] || {}
 
           database = mysql["database"] || datasource["url"].to_s[%r{jdbc:mysql://[^/]+/([^?]+)}, 1]
           values = {
-            "APP_PORT" => app["port"] || 8080,
             "MYSQL_DATABASE" => database,
             "MYSQL_USER" => mysql["user"] || datasource["username"],
             "MYSQL_PASSWORD" => mysql["password"] || datasource["password"],
@@ -171,6 +171,6 @@ jobs:
               exit 127
             fi
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
-            APP_IMAGE="$IMAGE_NAME:dev" docker compose --env-file .env.compose -f docker-compose.dev.yml pull app
-            APP_IMAGE="$IMAGE_NAME:dev" docker compose --env-file .env.compose -f docker-compose.dev.yml up -d app
+            APP_IMAGE="$IMAGE_NAME:dev" docker compose --env-file .env.compose -f docker-compose.dev.yml pull
+            APP_IMAGE="$IMAGE_NAME:dev" docker compose --env-file .env.compose -f docker-compose.dev.yml up -d
             docker image prune -f

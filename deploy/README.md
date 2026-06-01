@@ -8,6 +8,14 @@ GitHub Actions checks out the private `backend-security` submodule, uploads
 `application-security.yml` to the dev server, and mounts it into the app
 container as read-only configuration.
 
+Nginx also runs as a Docker Compose service. The server must already have the
+Let's Encrypt certificate for `cheerup.duckdns.org` at:
+
+```text
+/etc/letsencrypt/live/cheerup.duckdns.org/fullchain.pem
+/etc/letsencrypt/live/cheerup.duckdns.org/privkey.pem
+```
+
 ## GitHub Repository Secrets
 
 Required deployment secrets:
@@ -57,6 +65,10 @@ docker compose version
 mkdir -p /home/ubuntu/cheerup/backend
 ```
 
+Open inbound TCP 80 and 443 in the dev server security group. Port 8080 does
+not need to be exposed publicly because Nginx proxies to the app over the
+Compose network.
+
 ## backend-security Requirements
 
 `application-security.yml` must include a `dev` profile document with:
@@ -72,8 +84,6 @@ spring:
     password: ...
 
 deploy:
-  app:
-    port: 8080
   mysql:
     database: cheerup
     root-password: ...

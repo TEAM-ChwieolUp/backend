@@ -1,4 +1,17 @@
 services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: cheerup-nginx-dev
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - app
+
   app:
     image: ${APP_IMAGE:-ghcr.io/team-chwieolup/backend:dev}
     container_name: cheerup-api-dev
@@ -8,8 +21,8 @@ services:
       SPRING_CONFIG_IMPORT: optional:file:/app/config/application-security.yml
     volumes:
       - ./application-security.yml:/app/config/application-security.yml:ro
-    ports:
-      - "${APP_PORT:-8080}:8080"
+    expose:
+      - "8080"
     depends_on:
       mysql:
         condition: service_healthy
