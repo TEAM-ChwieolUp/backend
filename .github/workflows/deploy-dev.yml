@@ -142,6 +142,16 @@ jobs:
           script: |
             set -e
             cd "${{ env.DEPLOY_PATH }}"
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "Docker is not installed or is not available in PATH for this SSH user."
+              echo "Install Docker Engine and the Docker Compose plugin on the dev server before deploying."
+              exit 127
+            fi
+            if ! docker compose version >/dev/null 2>&1; then
+              echo "Docker Compose plugin is not available for this SSH user."
+              echo "Install docker-compose-plugin on the dev server before deploying."
+              exit 127
+            fi
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
             APP_IMAGE="$IMAGE_NAME:dev" docker compose --env-file .env.compose -f docker-compose.dev.yml pull app
             APP_IMAGE="$IMAGE_NAME:dev" docker compose --env-file .env.compose -f docker-compose.dev.yml up -d app
