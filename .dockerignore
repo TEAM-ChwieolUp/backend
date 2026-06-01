@@ -4,7 +4,9 @@
 .gradle-user-home
 .idea
 .kotlin
-build
+build/*
+!build/libs/
+!build/libs/*.jar
 docs
 src/main/resources/backend-security
 out
