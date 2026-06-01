@@ -13,6 +13,9 @@ spring:
               - profile
               - email
 
+server:
+  forward-headers-strategy: framework
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
