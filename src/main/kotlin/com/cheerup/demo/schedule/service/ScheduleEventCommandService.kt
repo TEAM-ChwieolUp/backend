@@ -3,6 +3,8 @@ package com.cheerup.demo.schedule.service
 import com.cheerup.demo.application.repository.ApplicationRepository
 import com.cheerup.demo.global.exception.BusinessException
 import com.cheerup.demo.global.exception.ErrorCode
+import com.cheerup.demo.notification.service.NoOpNotificationQueue
+import com.cheerup.demo.notification.service.NotificationQueue
 import com.cheerup.demo.schedule.domain.ScheduleCategory
 import com.cheerup.demo.schedule.domain.ScheduleEvent
 import com.cheerup.demo.schedule.dto.CreateScheduleEventRequest
@@ -20,6 +22,7 @@ class ScheduleEventCommandService(
     private val scheduleEventRepository: ScheduleEventRepository,
     private val applicationRepository: ApplicationRepository,
     private val iCalendarBuilder: ICalendarBuilder,
+    private val notificationQueue: NotificationQueue = NoOpNotificationQueue,
 ) {
 
     @Transactional
@@ -52,7 +55,15 @@ class ScheduleEventCommandService(
             endAt = request.endAt,
         )
 
-        return scheduleEventRepository.save(event).toScheduleEventResponse()
+        val saved = scheduleEventRepository.save(event)
+        val eventId = requireNotNull(saved.id) { "ScheduleEvent must be persisted" }
+        notificationQueue.enqueueScheduleEvent(
+            userId = userId,
+            eventId = eventId,
+            startAt = saved.startAt,
+        )
+
+        return saved.toScheduleEventResponse()
     }
 
     @Transactional
@@ -71,6 +82,13 @@ class ScheduleEventCommandService(
         if (request.startAt != null || request.endAt != null) {
             event.reschedule(nextStartAt, nextEndAt)
         }
+        if (request.startAt != null) {
+            notificationQueue.updateScheduleEvent(
+                userId = userId,
+                eventId = eventId,
+                startAt = event.startAt,
+            )
+        }
 
         return event.toScheduleEventResponse()
     }
@@ -86,6 +104,7 @@ class ScheduleEventCommandService(
             )
         }
 
+        notificationQueue.removeByEventId(userId, eventId)
         scheduleEventRepository.delete(event)
     }
 
