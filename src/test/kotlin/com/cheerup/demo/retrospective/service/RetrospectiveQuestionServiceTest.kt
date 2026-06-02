@@ -8,8 +8,11 @@ import com.cheerup.demo.application.repository.ApplicationRepository
 import com.cheerup.demo.application.repository.StageRepository
 import com.cheerup.demo.global.exception.BusinessException
 import com.cheerup.demo.global.exception.ErrorCode
+import com.cheerup.demo.retrospective.ai.GeneratedRetrospectiveQuestion
+import com.cheerup.demo.retrospective.ai.RetrospectiveAiProperties
 import com.cheerup.demo.retrospective.ai.RetrospectiveQuestionContext
 import com.cheerup.demo.retrospective.ai.RetrospectiveQuestionGenerationException
+import com.cheerup.demo.retrospective.ai.RetrospectiveQuestionGenerationResult
 import com.cheerup.demo.retrospective.ai.RetrospectiveQuestionGenerator
 import com.cheerup.demo.retrospective.ai.RetrospectiveQuestionTimeoutException
 import com.cheerup.demo.retrospective.dto.RetrospectiveQuestionRequest
@@ -28,6 +31,7 @@ class RetrospectiveQuestionServiceTest {
     private lateinit var stageRepository: StageRepository
     private lateinit var questionGenerator: RetrospectiveQuestionGenerator
     private lateinit var rateLimiter: RetrospectiveAiRateLimiter
+    private lateinit var properties: RetrospectiveAiProperties
     private lateinit var service: RetrospectiveQuestionService
 
     private val userId = 99L
@@ -40,39 +44,113 @@ class RetrospectiveQuestionServiceTest {
         stageRepository = mockk()
         questionGenerator = mockk()
         rateLimiter = mockk()
+        properties = RetrospectiveAiProperties().apply {
+            defaultQuestionCount = 4
+            maxQuestionCount = 15
+            dailyLimit = 50
+        }
         service = RetrospectiveQuestionService(
             applicationRepository = applicationRepository,
             stageRepository = stageRepository,
             questionGenerator = questionGenerator,
             rateLimiter = rateLimiter,
+            properties = properties,
         )
     }
 
     @Test
-    fun generateQuestions_success_filtersAndLimitsGeneratedQuestions() {
+    fun generateQuestions_success_usesDefaultQuestionCountAndApplicationStageFallback() {
         val contextSlot = slot<RetrospectiveQuestionContext>()
-        val tooLong = "x".repeat(1001)
-        val generated = listOf("  first question  ", "first question", "", tooLong) +
-            (1..20).map { "question $it" }
 
         every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication()
         every { stageRepository.findByIdAndUserId(stageId, userId) } returns fixtureStage()
         every { rateLimiter.tryAcquire(userId) } returns true
-        every { questionGenerator.generate(capture(contextSlot)) } returns generated
+        every { questionGenerator.generate(capture(contextSlot)) } returns fixtureResult()
 
         val response = service.generateQuestions(
             userId = userId,
-            request = RetrospectiveQuestionRequest(applicationId = applicationId, stageId = stageId),
+            request = RetrospectiveQuestionRequest(applicationId = applicationId),
         )
 
-        assertThat(response.questions).hasSize(15)
-        assertThat(response.questions.first()).isEqualTo("first question")
-        assertThat(response.questions).doesNotContain("", tooLong)
+        assertThat(response.questionSetTitle).isEqualTo("Interview retrospective")
+        assertThat(response.jobRole).isEqualTo("Backend")
+        assertThat(response.processStage).isEqualTo("1st interview")
+        assertThat(response.questions).hasSize(1)
+        assertThat(response.questions.single().sourceTemplateIds).containsExactly("q_backend_interview_001")
+        assertThat(contextSlot.captured.userId).isEqualTo(userId)
+        assertThat(contextSlot.captured.jobPostingTitle).isEqualTo("Acme Backend 채용")
         assertThat(contextSlot.captured.companyName).isEqualTo("Acme")
-        assertThat(contextSlot.captured.position).isEqualTo("Backend")
-        assertThat(contextSlot.captured.memo).isEqualTo("memo")
-        assertThat(contextSlot.captured.stageName).isEqualTo("1st interview")
-        assertThat(contextSlot.captured.stageCategory).isEqualTo(StageCategory.IN_PROGRESS)
+        assertThat(contextSlot.captured.jobRole).isEqualTo("Backend")
+        assertThat(contextSlot.captured.processStage).isEqualTo("1st interview")
+        assertThat(contextSlot.captured.questionCount).isEqualTo(4)
+    }
+
+    @Test
+    fun generateQuestions_success_usesExplicitStageAndQuestionCount() {
+        val explicitStageId = 8L
+        val contextSlot = slot<RetrospectiveQuestionContext>()
+
+        every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication(stageId = stageId)
+        every { stageRepository.findByIdAndUserId(explicitStageId, userId) } returns
+            fixtureStage(name = "coding test")
+        every { rateLimiter.tryAcquire(userId) } returns true
+        every { questionGenerator.generate(capture(contextSlot)) } returns fixtureResult(processStage = "coding test")
+
+        service.generateQuestions(
+            userId = userId,
+            request = RetrospectiveQuestionRequest(
+                applicationId = applicationId,
+                stageId = explicitStageId,
+                questionCount = 7,
+            ),
+        )
+
+        assertThat(contextSlot.captured.processStage).isEqualTo("coding test")
+        assertThat(contextSlot.captured.questionCount).isEqualTo(7)
+        verify(exactly = 0) { stageRepository.findByIdAndUserId(stageId, userId) }
+    }
+
+    @Test
+    fun generateQuestions_success_usesDefaultProcessStageWhenFallbackStageMissing() {
+        val contextSlot = slot<RetrospectiveQuestionContext>()
+
+        every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication()
+        every { stageRepository.findByIdAndUserId(stageId, userId) } returns null
+        every { rateLimiter.tryAcquire(userId) } returns true
+        every { questionGenerator.generate(capture(contextSlot)) } returns fixtureResult(processStage = "전체 전형")
+
+        service.generateQuestions(
+            userId = userId,
+            request = RetrospectiveQuestionRequest(applicationId = applicationId),
+        )
+
+        assertThat(contextSlot.captured.processStage).isEqualTo("전체 전형")
+    }
+
+    @Test
+    fun generateQuestions_filtersInvalidQuestionsAndCapsByConfiguredMax() {
+        properties.maxQuestionCount = 2
+        val tooLong = "x".repeat(1001)
+        val generatedQuestions = listOf(
+            fixtureQuestion(question = "first"),
+            fixtureQuestion(question = "first"),
+            fixtureQuestion(question = ""),
+            fixtureQuestion(question = tooLong),
+            fixtureQuestion(question = "second"),
+            fixtureQuestion(question = "third"),
+        )
+
+        every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication()
+        every { stageRepository.findByIdAndUserId(stageId, userId) } returns fixtureStage()
+        every { rateLimiter.tryAcquire(userId) } returns true
+        every { questionGenerator.generate(any()) } returns fixtureResult(questions = generatedQuestions)
+
+        val response = service.generateQuestions(
+            userId = userId,
+            request = RetrospectiveQuestionRequest(applicationId = applicationId, questionCount = 2),
+        )
+
+        assertThat(response.questions.map { it.question }).containsExactly("first", "second")
     }
 
     @Test
@@ -90,7 +168,7 @@ class RetrospectiveQuestionServiceTest {
     }
 
     @Test
-    fun generateQuestions_stageNotFound() {
+    fun generateQuestions_explicitStageNotFound() {
         every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication()
         every { stageRepository.findByIdAndUserId(stageId, userId) } returns null
 
@@ -108,8 +186,27 @@ class RetrospectiveQuestionServiceTest {
     }
 
     @Test
+    fun generateQuestions_questionCountOutOfRange() {
+        every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication()
+        every { stageRepository.findByIdAndUserId(stageId, userId) } returns fixtureStage()
+
+        assertThatThrownBy {
+            service.generateQuestions(
+                userId = userId,
+                request = RetrospectiveQuestionRequest(applicationId = applicationId, questionCount = 16),
+            )
+        }
+            .isInstanceOf(BusinessException::class.java)
+            .matches { (it as BusinessException).errorCode == ErrorCode.INVALID_INPUT }
+
+        verify(exactly = 0) { rateLimiter.tryAcquire(any()) }
+        verify(exactly = 0) { questionGenerator.generate(any()) }
+    }
+
+    @Test
     fun generateQuestions_rateLimited() {
         every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication()
+        every { stageRepository.findByIdAndUserId(stageId, userId) } returns fixtureStage()
         every { rateLimiter.tryAcquire(userId) } returns false
 
         assertThatThrownBy {
@@ -124,6 +221,7 @@ class RetrospectiveQuestionServiceTest {
     @Test
     fun generateQuestions_generatorFailure() {
         every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication()
+        every { stageRepository.findByIdAndUserId(stageId, userId) } returns fixtureStage()
         every { rateLimiter.tryAcquire(userId) } returns true
         every { questionGenerator.generate(any()) } throws RetrospectiveQuestionGenerationException("bad response")
 
@@ -137,6 +235,7 @@ class RetrospectiveQuestionServiceTest {
     @Test
     fun generateQuestions_generatorTimeout() {
         every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication()
+        every { stageRepository.findByIdAndUserId(stageId, userId) } returns fixtureStage()
         every { rateLimiter.tryAcquire(userId) } returns true
         every { questionGenerator.generate(any()) } throws RetrospectiveQuestionTimeoutException("timeout")
 
@@ -150,8 +249,14 @@ class RetrospectiveQuestionServiceTest {
     @Test
     fun generateQuestions_noValidQuestions() {
         every { applicationRepository.findByIdAndUserId(applicationId, userId) } returns fixtureApplication()
+        every { stageRepository.findByIdAndUserId(stageId, userId) } returns fixtureStage()
         every { rateLimiter.tryAcquire(userId) } returns true
-        every { questionGenerator.generate(any()) } returns listOf("", " ", "x".repeat(1001))
+        every { questionGenerator.generate(any()) } returns fixtureResult(
+            questions = listOf(
+                fixtureQuestion(question = ""),
+                fixtureQuestion(question = "x".repeat(1001)),
+            ),
+        )
 
         assertThatThrownBy {
             service.generateQuestions(userId, RetrospectiveQuestionRequest(applicationId = applicationId))
@@ -160,7 +265,7 @@ class RetrospectiveQuestionServiceTest {
             .matches { (it as BusinessException).errorCode == ErrorCode.AI_GENERATION_FAILED }
     }
 
-    private fun fixtureApplication(): Application =
+    private fun fixtureApplication(stageId: Long = this.stageId): Application =
         Application(
             userId = userId,
             stageId = stageId,
@@ -170,12 +275,32 @@ class RetrospectiveQuestionServiceTest {
             memo = "memo",
         )
 
-    private fun fixtureStage(): Stage =
+    private fun fixtureStage(name: String = "1st interview"): Stage =
         Stage(
             userId = userId,
-            name = "1st interview",
+            name = name,
             displayOrder = 1,
             color = "#0EA5E9",
             category = StageCategory.IN_PROGRESS,
+        )
+
+    private fun fixtureResult(
+        processStage: String = "1st interview",
+        questions: List<GeneratedRetrospectiveQuestion> = listOf(fixtureQuestion()),
+    ): RetrospectiveQuestionGenerationResult =
+        RetrospectiveQuestionGenerationResult(
+            questionSetTitle = "Interview retrospective",
+            jobRole = "Backend",
+            processStage = processStage,
+            questions = questions,
+        )
+
+    private fun fixtureQuestion(question: String = "What should be improved?"): GeneratedRetrospectiveQuestion =
+        GeneratedRetrospectiveQuestion(
+            category = "technical_depth",
+            question = question,
+            reason = "Find improvement points.",
+            priority = "high",
+            sourceTemplateIds = listOf("q_backend_interview_001"),
         )
 }

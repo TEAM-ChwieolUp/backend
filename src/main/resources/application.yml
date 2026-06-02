@@ -27,3 +27,13 @@ app:
     servers:
       - url: http://localhost:8080
         description: Local server
+
+cheerup:
+  ai:
+    retrospective:
+      question-path: /ai/retrospective/questions
+      connect-timeout: 1s
+      read-timeout: 8s
+      default-question-count: 4
+      max-question-count: 15
+      daily-limit: 50
