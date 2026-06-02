@@ -7,6 +7,7 @@ import com.cheerup.demo.global.jwt.JwtProperties
 import com.cheerup.demo.global.oauth.CustomOAuth2UserService
 import com.cheerup.demo.global.oauth.CustomOidcUserService
 import com.cheerup.demo.global.oauth.OAuth2AuthenticationSuccessHandler
+import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -24,7 +25,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(JwtProperties::class)
+@EnableConfigurationProperties(JwtProperties::class, CorsProperties::class)
 class SecurityConfig(
     private val jwtAuthenticationFilter: JwtAuthenticationFilter,
     private val jwtAuthenticationEntryPoint: JwtAuthenticationEntryPoint,
@@ -32,12 +33,13 @@ class SecurityConfig(
     private val customOAuth2UserService: CustomOAuth2UserService,
     private val customOidcUserService: CustomOidcUserService,
     private val oAuth2AuthenticationSuccessHandler: OAuth2AuthenticationSuccessHandler,
+    private val corsProperties: CorsProperties,
 ) {
 
     @Bean
     fun corsConfigurationSource(): CorsConfigurationSource {
         val configuration = CorsConfiguration().apply {
-            allowedOrigins = listOf("http://localhost:3000")
+            allowedOrigins = corsProperties.allowedOrigins
             allowedMethods = listOf(
                 HttpMethod.GET.name(),
                 HttpMethod.POST.name(),
@@ -96,3 +98,8 @@ class SecurityConfig(
             .cors(Customizer.withDefaults())
             .build()
 }
+
+@ConfigurationProperties(prefix = "app.cors")
+data class CorsProperties(
+    val allowedOrigins: List<String> = listOf("http://localhost:3000"),
+)
