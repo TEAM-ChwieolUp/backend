@@ -1,40 +1,51 @@
 package com.cheerup.demo.retrospective.service
 
-import org.springframework.beans.factory.annotation.Value
+import com.cheerup.demo.retrospective.ai.RetrospectiveAiProperties
+import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Component
+import java.time.Clock
+import java.time.Duration
 import java.time.LocalDate
 import java.time.ZoneOffset
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
+import java.time.format.DateTimeFormatter
 
 interface RetrospectiveAiRateLimiter {
     fun tryAcquire(userId: Long): Boolean
 }
 
 @Component
-class InMemoryRetrospectiveAiRateLimiter(
-    @Value("\${cheerup.retrospective.ai.daily-limit:50}")
-    private val dailyLimit: Int,
+class RedisRetrospectiveAiRateLimiter(
+    private val redisTemplate: StringRedisTemplate,
+    private val properties: RetrospectiveAiProperties,
+    private val clock: Clock,
 ) : RetrospectiveAiRateLimiter {
 
-    private val counters = ConcurrentHashMap<CounterKey, AtomicInteger>()
-
     override fun tryAcquire(userId: Long): Boolean {
-        if (dailyLimit <= 0) return false
-
-        val today = LocalDate.now(ZoneOffset.UTC)
-        counters.keys.removeIf { it.date.isBefore(today.minusDays(1)) }
-
-        val counter = counters.computeIfAbsent(CounterKey(userId, today)) { AtomicInteger(0) }
-        while (true) {
-            val current = counter.get()
-            if (current >= dailyLimit) return false
-            if (counter.compareAndSet(current, current + 1)) return true
+        val dailyLimit = properties.dailyLimit
+        if (dailyLimit <= 0) {
+            return false
         }
+
+        val now = clock.instant()
+        val today = LocalDate.ofInstant(now, ZoneOffset.UTC)
+        val key = key(userId, today)
+        val count = redisTemplate.opsForValue().increment(key) ?: return false
+        if (count == 1L) {
+            redisTemplate.expire(key, ttlUntilNextUtcMidnight(now, today))
+        }
+
+        return count <= dailyLimit
     }
 
-    private data class CounterKey(
-        val userId: Long,
-        val date: LocalDate,
-    )
+    private fun key(userId: Long, date: LocalDate): String =
+        "$KEY_PREFIX:$userId:${date.format(DateTimeFormatter.BASIC_ISO_DATE)}"
+
+    private fun ttlUntilNextUtcMidnight(now: java.time.Instant, today: LocalDate): Duration {
+        val nextMidnight = today.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC)
+        return Duration.between(now, nextMidnight)
+    }
+
+    companion object {
+        const val KEY_PREFIX = "retrospective:ai:rate"
+    }
 }

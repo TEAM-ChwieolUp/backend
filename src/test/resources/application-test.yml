@@ -47,3 +47,8 @@ app:
       issuer: cheerup-test
       access-token-expiration: PT15M
       refresh-token-expiration: P14D
+
+cheerup:
+  ai:
+    retrospective:
+      base-url: http://ai-retrospective.test
