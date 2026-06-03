@@ -27,7 +27,7 @@
 | `application` | 채용 칸반 보드 — 지원 기업 카드, 단계 전이, 태그 | `Application`, `Stage`, `Tag` |
 | `retrospective` | 단계별 회고 (커스텀 필드 포함) | `Retrospective`, `RetrospectiveField` |
 | `schedule` | 취업 이중 달력 — 채용공고/지원 프로세스/개인의 3레이어 | `ScheduleEvent` |
-| `notification` | 마감 D-3/D-1/당일 알림 스케줄링 (Redis Sorted Set) | (엔티티 없음, Redis 기반) |
+| `notification` | 마감 D-3/D-1/당일 알림 — Redis Sorted Set 예약 큐 + DB 알림함 | `Notification` |
 | `mail` | Gmail/Outlook OAuth 연동, 메일 수신 Webhook | `MailIntegration` |
 | `ai` | 채용 메일 분류, 일정 추출, 제안 생성 (Spring AI + GPT-4o-mini) | `Suggestion` |
 | `auth` | OAuth2 로그인, JWT 발급/갱신 | `User`, `RefreshToken` |
@@ -84,7 +84,7 @@
 
 | 작업 | 주기 | 설명 |
 |------|------|------|
-| 마감 알림 발송 | 1분마다 | Redis Sorted Set의 `trigger_at` 폴링하여 D-3/D-1/당일 알림 발송 |
+| 마감 알림 생성 | 1분마다 | Redis Sorted Set의 `trigger_at` 폴링 → due item을 DB `notifications` row로 변환 |
 | 만료 토큰 정리 | 일 1회 | 만료된 RefreshToken 삭제 |
 
 ---
@@ -126,7 +126,7 @@ src/main/kotlin/com/cheerup/demo/
 ├── application/               # 채용 칸반 보드
 ├── retrospective/             # 단계별 회고 (커스텀 필드)
 ├── schedule/                  # 취업 이중 달력 (3레이어)
-├── notification/              # 마감 알림 (Redis Sorted Set)
+├── notification/              # 마감 알림 (Redis Sorted Set 예약 큐 + DB 알림함)
 ├── mail/                      # Gmail/Outlook OAuth + Webhook 수신
 ├── ai/                        # Spring AI 분류/추출 엔진, Suggestion
 ├── auth/                      # 로그인, JWT 발급/갱신
@@ -142,7 +142,7 @@ src/main/kotlin/com/cheerup/demo/
 1. **입력층** — `controller/` (사용자 직접 입력) + `mail/webhook/` (Gmail/Outlook 메일 수신)
 2. **핵심 엔진** — `application/`, `schedule/`, `notification/` (도메인 비즈니스 로직)
 3. **AI 보조 엔진** — `ai/` (분류·추출·제안 생성, 항상 `Suggestion` 형태로 출력)
-4. **출력층** — `controller/` 응답, FCM/이메일 알림, 캘린더 export
+4. **출력층** — `controller/` 응답, DB 알림함 조회, 캘린더 export
 
 #### Suggestion 패턴 (AI 결과 처리)
 AI는 **절대로 데이터를 직접 변경하지 않는다.** 모든 AI 결과는 `Suggestion` 엔티티로 저장되고, 사용자가 `POST /api/mail/suggestions/{id}/accept`를 호출해야 실제 `Application`/`ScheduleEvent`에 반영된다.
@@ -255,7 +255,7 @@ docker compose up -d
 ./gradlew ktlintCheck
 ```
 
-> 현재 로컬 인프라는 `docker-compose.yml`의 MySQL 8 기준으로 맞춘다. Redis는 실제 사용 시점에 추가한다.
+> 현재 로컬 인프라는 `docker-compose.yml`의 MySQL 8 + Redis 기준으로 맞춘다.
 
 ---
 

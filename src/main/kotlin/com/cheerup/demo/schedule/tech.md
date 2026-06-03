@@ -19,7 +19,7 @@
 ### Out of Scope (다른 도메인이 처리)
 | 책임 | 위임 대상 |
 |---|---|
-| 알림 발송·스케줄링 | `notification/` (Redis Sorted Set, D-3/D-1/0d) |
+| 알림 발송·스케줄링 | `notification/` (Redis Sorted Set 예약 큐 + DB 알림함, D-3/D-1/0d) |
 | 외부 캘린더 양방향 동기화 | **미지원** (v1은 단방향 .ics 다운로드만) |
 | 채용 메일 → 일정 추출 | `ai/`, `mail/` (`Suggestion` 형태로 도착, 사용자 수락 시 본 도메인이 `create` 호출) |
 | `Application.deadlineAt`의 원본 보유 | `application/` (칸반 측이 source of truth) |
@@ -156,7 +156,7 @@
 
 **응답 201**: 등록된 단일 `ScheduleEventResponse`.
 
-**부수 효과**: `notification/`에 알림 등록 위임 (`startAt` 기준 D-3/D-1/0d).
+**부수 효과**: 사용자가 직접 생성한 일정은 `notification/`에 `SCHEDULE_EVENT` 예약 등록을 위임한다 (`startAt` 기준 D-3/D-1/0d). Application deadline에서 자동 mirror로 생성되는 `JOB_POSTING`은 이 경로를 사용하지 않는다.
 
 ---
 
@@ -267,13 +267,15 @@ ScheduleSyncService 구현 (단일 트랜잭션, application/의 @Transactional 
   ├─ when {
   │     deadlineAt == null && 기존 == null → no-op
   │     deadlineAt == null && 기존 != null → repo.delete(기존), notificationQueue.removeByEventId(기존.id)
-  │     deadlineAt != null && 기존 == null → save(new ScheduleEvent(category=JOB_POSTING, title="${companyName} 채용 마감", startAt=deadlineAt)), notificationQueue.enqueue(...)
-  │     deadlineAt != null && 기존 != null → 기존.startAt = deadlineAt; 기존.title = "${companyName} 채용 마감"; notificationQueue.update(기존.id, deadlineAt)
+  │     deadlineAt != null && 기존 == null → save(new ScheduleEvent(category=JOB_POSTING, title="${companyName} 채용 마감", startAt=deadlineAt))
+  │     deadlineAt != null && 기존 != null → 기존.startAt = deadlineAt; 기존.title = "${companyName} 채용 마감"
   │  }
   └─ 종료
 ```
 
 **왜 application/이 schedule/을 부르고 그 반대가 아닌가**: deadline의 source는 칸반이고, 달력은 미러다. 변경 트리거를 source가 발신해야 sync가 lossless.
+
+**알림 정책**: 자동 `JOB_POSTING` row는 달력 표시용 mirror이므로 생성/갱신 시 `SCHEDULE_EVENT` 알림 큐를 등록하지 않는다. 마감 알림은 `application/`에서 `APPLICATION` source로 등록한다. 삭제 분기에서는 과거에 남은 예약 큐를 정리할 수 있도록 `notificationQueue.removeByEventId`만 유지한다.
 
 ### 4.3 Application 삭제 → ScheduleEvent 정리
 
@@ -299,7 +301,7 @@ Service (@Transactional)
   │     - PERSONAL: applicationId가 null인지 검증
   ├─ JOB_POSTING이면 동일 applicationId로 이미 존재하는지 확인 → 있으면 SCHEDULE_DUPLICATE_JOB_POSTING
   ├─ ScheduleEvent 생성·save
-  └─ notificationQueue.enqueue(eventId, startAt - 3d, 1d, 0d)
+  └─ notificationQueue.enqueueScheduleEvent(userId, eventId, startAt)
    ↓
 201
 ```
@@ -454,7 +456,7 @@ V11__index_schedule_events_application.sql
 3. `ScheduleEventCommandService.create / update / delete` + 카테고리별 검증 + 단위 테스트
 4. `ScheduleSyncService` 인터페이스 + 구현 (4분기) + 단위 테스트
 5. `application/` 측에서 `ScheduleSyncService.syncApplicationDeadline` 호출 wire-up (set/update/delete 흐름)
-6. `notificationQueue` stub 인터페이스로 `enqueue` / `update` / `removeByEventId` / `removeByApplicationId` 정의 (실 구현은 `notification/` PR)
+6. `notification/`의 `NotificationQueue` port(`enqueueScheduleEvent`, `updateScheduleEvent`, `removeByEventId`, `removeByApplicationId`)를 주입받아 직접 일정과 stale 예약 정리에 사용
 7. iCalendar export 컨트롤러 + 단위 테스트 (RFC 5545 escape 케이스)
 8. 통합 테스트(Testcontainers) — IDOR 회귀, sync 4분기, JOB_POSTING_LOCKED, export Content-Type
 9. CLAUDE.md의 도메인 요약·엔드포인트 표 갱신, 본 tech.md의 §12 미해결 항목 재정리

@@ -18,6 +18,8 @@ import com.cheerup.demo.application.repository.StageRepository
 import com.cheerup.demo.application.repository.TagRepository
 import com.cheerup.demo.global.exception.BusinessException
 import com.cheerup.demo.global.exception.ErrorCode
+import com.cheerup.demo.notification.service.NoOpNotificationQueue
+import com.cheerup.demo.notification.service.NotificationQueue
 import com.cheerup.demo.schedule.service.NoOpScheduleSyncService
 import com.cheerup.demo.schedule.service.ScheduleSyncService
 import org.springframework.stereotype.Service
@@ -31,6 +33,7 @@ class ApplicationService(
     private val applicationTagRepository: ApplicationTagRepository,
     private val tagRepository: TagRepository,
     private val scheduleSyncService: ScheduleSyncService = NoOpScheduleSyncService,
+    private val notificationQueue: NotificationQueue = NoOpNotificationQueue,
 ) {
 
     fun getBoard(
@@ -45,13 +48,14 @@ class ApplicationService(
 
         val cardsByStageId: Map<Long, List<ApplicationCard>> =
             cards.groupBy(
-                keySelector = { it.stageId },
-                valueTransform = { application ->
+                keySelector = { it.stageId }, // 무엇을 기준으로 묶을거니
+                valueTransform = { application -> // 묶을 때 값을 어떤 형태로 바꿀거니
                     val applicationId = requireNotNull(application.id) { "Application must be persisted" }
                     application.toCard(tagsByApplicationId[applicationId].orEmpty())
                 },
             )
 
+        // 모든 단계를 돌면서 해당 단계에 맞는 코드를 넣기
         val nodes = stages.map { stage ->
             val stageId = requireNotNull(stage.id) { "Stage must be persisted" }
             stage.toNode(cardsByStageId[stageId].orEmpty())
@@ -93,6 +97,13 @@ class ApplicationService(
             companyName = saved.companyName,
             deadlineAt = saved.deadlineAt,
         )
+        saved.deadlineAt?.let { deadlineAt ->
+            notificationQueue.enqueueApplicationDeadline(
+                userId = userId,
+                applicationId = savedId,
+                deadlineAt = deadlineAt,
+            )
+        }
 
         return saved.toCard(tagSummaries)
     }
@@ -152,7 +163,15 @@ class ApplicationService(
             )
         }
 
-        // TODO: notification/ 도메인 도입 시 deadlineChanged == true 면 알림 큐 갱신 호출
+        if (deadlineChanged) {
+            application.deadlineAt?.let { deadlineAt ->
+                notificationQueue.updateApplicationDeadline(
+                    userId = userId,
+                    applicationId = applicationId,
+                    deadlineAt = deadlineAt,
+                )
+            } ?: notificationQueue.removeByApplicationId(userId, applicationId)
+        }
 
         // 태그 diff 갱신 (tagIds == null이면 변경 없음)
         if (request.tagIds != null) {
@@ -176,13 +195,9 @@ class ApplicationService(
                 detail = "applicationId=$applicationId",
             )
 
+        notificationQueue.removeByApplicationId(userId, applicationId)
         applicationTagRepository.deleteByApplicationId(applicationId)
         scheduleSyncService.deleteByApplicationId(userId, applicationId)
-
-        // TODO: schedule/ 도메인 도입 시 JOB_POSTING ScheduleEvent 정리
-        //       (scheduleEventRepository.deleteByApplicationId + calendarExporter.cancelExternalExport)
-        // TODO: notification/ 도메인 도입 시 마감 알림 큐에서 제거
-        //       (notificationQueue.removeByApplicationId)
 
         applicationRepository.delete(application)
     }

@@ -6,6 +6,7 @@ import com.cheerup.demo.application.domain.Priority
 import com.cheerup.demo.application.domain.Stage
 import com.cheerup.demo.application.domain.StageCategory
 import com.cheerup.demo.application.domain.Tag
+import com.cheerup.demo.application.dto.CreateApplicationRequest
 import com.cheerup.demo.application.dto.UpdateApplicationRequest
 import com.cheerup.demo.application.repository.ApplicationRepository
 import com.cheerup.demo.application.repository.ApplicationTagRepository
@@ -13,6 +14,8 @@ import com.cheerup.demo.application.repository.StageRepository
 import com.cheerup.demo.application.repository.TagRepository
 import com.cheerup.demo.global.exception.BusinessException
 import com.cheerup.demo.global.exception.ErrorCode
+import com.cheerup.demo.notification.service.NotificationQueue
+import com.cheerup.demo.schedule.service.ScheduleSyncService
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -33,6 +36,8 @@ class ApplicationServiceTest {
     private lateinit var applicationRepository: ApplicationRepository
     private lateinit var applicationTagRepository: ApplicationTagRepository
     private lateinit var tagRepository: TagRepository
+    private lateinit var scheduleSyncService: ScheduleSyncService
+    private lateinit var notificationQueue: NotificationQueue
     private lateinit var service: ApplicationService
 
     private val userId = 99L
@@ -44,12 +49,54 @@ class ApplicationServiceTest {
         applicationRepository = mockk()
         applicationTagRepository = mockk(relaxUnitFun = true)
         tagRepository = mockk()
+        scheduleSyncService = mockk(relaxUnitFun = true)
+        notificationQueue = mockk(relaxUnitFun = true)
         service = ApplicationService(
             stageRepository = stageRepository,
             applicationRepository = applicationRepository,
             applicationTagRepository = applicationTagRepository,
             tagRepository = tagRepository,
+            scheduleSyncService = scheduleSyncService,
+            notificationQueue = notificationQueue,
         )
+    }
+
+    @Test
+    fun `createApplication enqueues application deadline notification when deadline exists`() {
+        val deadlineAt = Instant.parse("2026-06-10T09:00:00Z")
+
+        every { stageRepository.findByIdAndUserId(1L, userId) } returns fixtureStage(id = 1L)
+        every { applicationRepository.save(any<Application>()) } answers {
+            firstArg<Application>().also {
+                ReflectionTestUtils.setField(it, "id", applicationId)
+            }
+        }
+
+        service.createApplication(
+            userId = userId,
+            request = CreateApplicationRequest(
+                stageId = 1L,
+                companyName = "Toss",
+                position = "Backend",
+                deadlineAt = deadlineAt,
+            ),
+        )
+
+        verify(exactly = 1) {
+            scheduleSyncService.syncApplicationDeadline(
+                userId = userId,
+                applicationId = applicationId,
+                companyName = "Toss",
+                deadlineAt = deadlineAt,
+            )
+        }
+        verify(exactly = 1) {
+            notificationQueue.enqueueApplicationDeadline(
+                userId = userId,
+                applicationId = applicationId,
+                deadlineAt = deadlineAt,
+            )
+        }
     }
 
     @Test
@@ -273,6 +320,17 @@ class ApplicationServiceTest {
 
         assertThat(application.deadlineAt).isEqualTo(newDeadline)
         assertThat(response.deadlineAt).isEqualTo(newDeadline)
+        verify(exactly = 1) {
+            scheduleSyncService.syncApplicationDeadline(
+                userId = userId,
+                applicationId = applicationId,
+                companyName = application.companyName,
+                deadlineAt = newDeadline,
+            )
+        }
+        verify(exactly = 1) {
+            notificationQueue.updateApplicationDeadline(userId, applicationId, newDeadline)
+        }
     }
 
     @Test
@@ -320,7 +378,9 @@ class ApplicationServiceTest {
 
         verifyOrder {
             applicationRepository.findByIdAndUserId(applicationId, userId)
+            notificationQueue.removeByApplicationId(userId, applicationId)
             applicationTagRepository.deleteByApplicationId(applicationId)
+            scheduleSyncService.deleteByApplicationId(userId, applicationId)
             applicationRepository.delete(application)
         }
     }

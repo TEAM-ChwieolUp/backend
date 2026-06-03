@@ -8,3 +8,8 @@ app:
     servers:
       - url: ${APP_OPENAPI_DEV_SERVER_URL:https://dev-api.cheerup.example.com}
         description: Development server
+
+cheerup:
+  ai:
+    retrospective:
+      base-url: ${AI_RETROSPECTIVE_BASE_URL}

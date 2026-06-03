@@ -19,7 +19,7 @@
 ### Out of Scope (다른 도메인이 처리)
 | 책임 | 위임 대상 |
 |---|---|
-| 마감 알림 발송·스케줄링 | `notification/` (Redis Sorted Set) |
+| 마감 알림 발송·스케줄링 | `notification/` (Redis Sorted Set 예약 큐 + DB 알림함) |
 | 회고 작성·조회 | `retrospective/` (`Application` 삭제 시 DB CASCADE로만 영향) |
 | 일정 표시·내보내기 | `schedule/` (`deadlineAt` 변경 시 `JOB_POSTING` `ScheduleEvent` row를 동기화 저장, iCalendar export) |
 | AI 메일 분류 → 단계 변경 제안 | `ai/`, `mail/` (`Suggestion` 형태로 보내고, 본 도메인은 수락 후 `changeStage`만 호출됨) |
@@ -65,7 +65,7 @@ application/
 | 인덱스 | 사용처 |
 |---|---|
 | `applications(user_id, stage_id)` | 칸반 보드 조회의 1차 필터 |
-| `applications(user_id, deadline_at)` | `notification/`의 마감 폴링 (NULLS LAST 정렬 — MySQL은 NULL이 작게 정렬되므로 쿼리에서 `deadline_at IS NOT NULL` 명시) |
+| `applications(user_id, deadline_at)` | 마감 임박 카드 조회나 정리 작업에서 사용. 알림 생성은 `notification/`의 Redis 예약 큐가 담당 |
 | `application_tags(tag_id)` | 태그별 카드 검색 (M:N 역방향) |
 | `stages(user_id, display_order)` | 보드 컬럼 순서 |
 | `tags(user_id, name)` UNIQUE | 같은 사용자 내 태그 이름 중복 방지 |
@@ -303,12 +303,13 @@ Service (@Transactional)
   │     → 누락된 ID 있으면 TAG_NOT_FOUND
   ├─ Application 생성 + save → id 발급
   ├─ application_tags 생성 (M:N batch insert)
-  └─ notificationQueue.enqueue(applicationId, deadlineAt - 3d, 1d, 0d)
+  ├─ scheduleSyncService.syncApplicationDeadline(userId, applicationId, companyName, deadlineAt)
+  └─ notificationQueue.enqueueApplicationDeadline(userId, applicationId, deadlineAt)
    ↓
 201
 ```
 
-`notificationQueue.enqueue`는 `notification/` 도메인의 인터페이스 메서드. 이 도메인은 그 시그니처만 알고 구현은 모른다.
+`notificationQueue.enqueueApplicationDeadline`은 `notification/` 도메인의 `NotificationQueue` port 메서드다. Application deadline 알림은 `APPLICATION` source가 담당하며, 같은 deadline에서 자동 생성되는 `JOB_POSTING` mirror는 별도의 `SCHEDULE_EVENT` 알림을 만들지 않는다.
 
 ---
 
@@ -383,7 +384,7 @@ TAG_DUPLICATE(CONFLICT, "TAG_DUPLICATE", "이미 존재하는 태그 이름입�
 ### 10.1 단위 (MockK, ApplicationServiceTest)
 
 - `getBoard` 빈 보드도 모든 Stage가 응답에 포함
-- `create` 성공 — `notification.enqueue` 호출 검증
+- `create` 성공 — `notificationQueue.enqueueApplicationDeadline` 호출 검증
 - `create`: 다른 사용자의 stageId → `STAGE_NOT_FOUND`
 - `create`: 일부 tagIds가 다른 사용자 소유 → `TAG_NOT_FOUND` (전체 롤백)
 - `update`: 다른 사용자 카드 → `APPLICATION_NOT_FOUND`
@@ -449,7 +450,7 @@ V7__index_applications_user_deadline.sql
 4. `Tag` 엔티티 + CRUD + 중복 핸들링
 5. `Application` + `ApplicationTag` 엔티티 + Repository (보드 조회 fetch join) + Service
 6. Application Controller: GET 보드 → POST → PATCH → DELETE 순
-7. `notification/`의 인터페이스만 먼저 stub으로 만들고 호출 (실 구현은 다른 도메인 PR)
+7. `notification/`의 `NotificationQueue` port를 주입받아 카드 생성/마감 변경/삭제 시 Redis 예약 큐를 동기화
 8. 통합 테스트(Testcontainers) — IDOR 회귀, CASCADE, M:N
 9. CLAUDE.md의 도메인 요약·엔드포인트 표 갱신, 본 tech.md의 §12 미해결 항목 재정리
 
@@ -474,8 +475,8 @@ V7__index_applications_user_deadline.sql
 
 | 항목 | 위치 | 상태 | 트리거 |
 |---|---|---|---|
-| `notification/` 위임 — 카드 생성/마감 변경/카드 삭제 시 Redis 알림 큐 동기화 | `service/ApplicationService.kt:128, 155` | ❌ TODO 주석만 | `notification/` 도메인의 `notificationQueue` 인터페이스 도입 후 호출 |
-| `schedule/` 위임 — `deadlineAt` 변경 시 `JOB_POSTING ScheduleEvent` 동기화, 삭제 시 정리 | `service/ApplicationService.kt:128, 153` | ❌ TODO 주석만 | `schedule/` 도메인의 `ScheduleEventRepository`/`CalendarExporter` 도입 후 호출 |
+| `notification/` 위임 — 카드 생성/마감 변경/카드 삭제 시 Redis 예약 큐 동기화 | `service/ApplicationService.kt` | ✅ 구현됨 | `NotificationQueue` port 호출 |
+| `schedule/` 위임 — `deadlineAt` 변경 시 `JOB_POSTING ScheduleEvent` 동기화, 삭제 시 정리 | `service/ApplicationService.kt` | ✅ 구현됨 | `ScheduleSyncService` 호출 |
 | `retrospective/` 라우팅 — `POST /api/applications/{id}/retrospectives` | `controller/ApplicationController.kt` | ❌ 미구현 | `retrospective/` 도메인의 `RetrospectiveService` 도입 후 카드 소유자 검증 + 위임 |
 | `StageSeedService.seedDefault(userId)` — 가입 시 5개 기본 Stage 시드 | `service/` | ❌ 미구현 | `user/`(또는 `auth/`) 회원가입 플로우에서 호출. 현재는 사용자가 Stage 0개 상태에서 시작하므로 카드 생성 불가 — **신규 가입 사용자 차단 위험** |
 | `auth/` JWT + `@CurrentUser` AOP 도입 | 모든 Controller | ❌ 미구현 | 현재 `@RequestHeader("X-User-Id") userId: Long` 스텁 사용 (`ApplicationController.kt:35`, `StageController.kt:31`, `TagController` 동일). **운영 환경 노출 금지 — 임의 userId 위조 가능** |

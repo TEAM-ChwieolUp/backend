@@ -1,5 +1,7 @@
 package com.cheerup.demo.schedule.service
 
+import com.cheerup.demo.notification.service.NoOpNotificationQueue
+import com.cheerup.demo.notification.service.NotificationQueue
 import com.cheerup.demo.schedule.domain.ScheduleCategory
 import com.cheerup.demo.schedule.domain.ScheduleEvent
 import com.cheerup.demo.schedule.repository.ScheduleEventRepository
@@ -33,6 +35,7 @@ object NoOpScheduleSyncService : ScheduleSyncService {
 @Transactional
 class DefaultScheduleSyncService(
     private val scheduleEventRepository: ScheduleEventRepository,
+    private val notificationQueue: NotificationQueue = NoOpNotificationQueue,
 ) : ScheduleSyncService {
 
     override fun syncApplicationDeadline(
@@ -49,7 +52,11 @@ class DefaultScheduleSyncService(
 
         when {
             deadlineAt == null && existing == null -> Unit
-            deadlineAt == null && existing != null -> scheduleEventRepository.delete(existing)
+            deadlineAt == null && existing != null -> {
+                existing.id?.let { eventId -> notificationQueue.removeByEventId(userId, eventId) }
+                scheduleEventRepository.delete(existing)
+            }
+
             deadlineAt != null && existing == null -> {
                 scheduleEventRepository.save(
                     ScheduleEvent(
@@ -73,6 +80,9 @@ class DefaultScheduleSyncService(
     override fun deleteByApplicationId(userId: Long, applicationId: Long) {
         val events = scheduleEventRepository.findAllByUserIdAndApplicationId(userId, applicationId)
         if (events.isNotEmpty()) {
+            events.mapNotNull { it.id }.forEach { eventId ->
+                notificationQueue.removeByEventId(userId, eventId)
+            }
             scheduleEventRepository.deleteAll(events)
         }
     }
