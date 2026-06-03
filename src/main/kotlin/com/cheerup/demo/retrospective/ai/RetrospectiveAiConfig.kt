@@ -13,14 +13,13 @@ class RetrospectiveAiConfig {
     @Bean
     fun retrospectiveAiRestClient(
         properties: RetrospectiveAiProperties,
-        restClientBuilder: RestClient.Builder,
     ): RestClient {
         val requestFactory = SimpleClientHttpRequestFactory().apply {
             setConnectTimeout(properties.connectTimeout)
             setReadTimeout(properties.readTimeout)
         }
 
-        return restClientBuilder
+        return RestClient.builder()
             .baseUrl(properties.requiredBaseUrl())
             .requestFactory(requestFactory)
             .build()

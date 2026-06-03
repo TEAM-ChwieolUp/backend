@@ -50,7 +50,9 @@ class StageServiceTest {
         } returns 2
 
         val savedSlot = slot<Stage>()
-        every { stageRepository.save(capture(savedSlot)) } answers { savedSlot.captured }
+        every { stageRepository.save(capture(savedSlot)) } answers {
+            savedSlot.captured.also { ReflectionTestUtils.setField(it, "id", 100L) }
+        }
 
         val response = service.create(userId, CreateStageRequest(name = "서류 전형", color = "#4F46E5"))
 
@@ -77,7 +79,9 @@ class StageServiceTest {
         } returns 2
 
         val savedSlot = slot<Stage>()
-        every { stageRepository.save(capture(savedSlot)) } answers { savedSlot.captured }
+        every { stageRepository.save(capture(savedSlot)) } answers {
+            savedSlot.captured.also { ReflectionTestUtils.setField(it, "id", 100L) }
+        }
 
         // 사용자가 displayOrder=99 로 보냈지만 PASSED.displayOrder=2 로 클램프되어야 한다.
         service.create(userId, CreateStageRequest(name = "기술 면접", color = "#0EA5E9", displayOrder = 99))
@@ -95,7 +99,9 @@ class StageServiceTest {
         every { stageRepository.findByUserIdAndCategory(userId, StageCategory.PASSED) } returns null
 
         val savedSlot = slot<Stage>()
-        every { stageRepository.save(capture(savedSlot)) } answers { savedSlot.captured }
+        every { stageRepository.save(capture(savedSlot)) } answers {
+            savedSlot.captured.also { ReflectionTestUtils.setField(it, "id", 100L) }
+        }
 
         service.create(userId, CreateStageRequest(name = "관심 기업", color = "#94A3B8"))
 

@@ -13,7 +13,7 @@
 - 회고 CRUD (빈 회고 생성 → 항목 누적 → 요약 작성 → 삭제)
 - 회고 항목(Q&A 쌍) 단위 조작 — append, 인덱스 기반 update/delete
 - 템플릿 CRUD 및 회고에 템플릿 적용 (스냅샷 복사)
-- AI 질문 생성 — `Application`/`Stage` 컨텍스트를 LLM에 넘겨 질문 목록 동기 응답 (DB 미반영)
+- AI 질문 생성 — `Application`/`Stage` 컨텍스트를 **별도 AI 서버**에 전달해 회고 질문 목록을 동기 응답 (DB 미반영)
 
 ### Out of Scope (다른 도메인이 처리)
 | 책임 | 위임 대상 |
@@ -22,12 +22,12 @@
 | `Stage` 라벨/카테고리 조회 | `stage_id` 스냅샷만 보존, 표시용 정보는 조회 시 `application/`을 join하거나 응답에서 ID만 노출 |
 | 마감 알림·달력 표시 | `notification/`, `schedule/` (회고는 알림/달력과 무관) |
 | AI 메일 분류 → Suggestion | `ai/`, `mail/` (`Suggestion` 패턴은 비동기·승인 흐름이라 별개. 회고 AI는 동기 보조) |
-| LLM 호출 인프라 (`ChatClient`, 프롬프트 빌더, 출력 스키마 검증) | `ai/` (본 도메인은 `RetrospectiveQuestionGenerator` 인터페이스만 호출) |
+| AI 모델 실행/프롬프트 관리 | 별도 AI 서버 (`POST /ai/retrospective/questions`). 백엔드는 HTTP 클라이언트와 응답 검증만 책임 |
 | 사용자 컨텍스트 / JWT | `global/jwt`, `@CurrentUser` |
 
 ### 비기능 요구
 - 회고/템플릿 CRUD: **p95 ≤ 200ms**
-- AI 질문 생성: 동기 응답이지만 LLM 왕복으로 **p95 ≤ 6s** 허용 (UI는 로딩 표시). 타임아웃 8s 후 `AI_GENERATION_FAILED` 반환
+- AI 질문 생성: 백엔드 EC2 → 별도 AI 서버 왕복으로 **p95 ≤ 6s** 허용 (UI는 로딩 표시). 타임아웃 8s 후 `AI_GENERATION_TIMEOUT` 반환
 - 모든 엔드포인트 IDOR 방지 — 요청 `userId`와 리소스 소유자 일치 검증 필수
 - 본 도메인 모든 row는 hard delete (회고는 `Application` CASCADE로만 정리됨)
 
@@ -45,7 +45,7 @@ retrospective/
 ├── service/       # RetrospectiveService, RetrospectiveTemplateService, RetrospectiveQuestionService
 ├── repository/    # RetrospectiveRepository, RetrospectiveTemplateRepository
 ├── domain/        # Retrospective, RetrospectiveItem(값 객체), RetrospectiveTemplate
-├── ai/            # RetrospectiveQuestionGenerator (interface) + 기본 구현은 ai/ 도메인에 둠
+├── ai/            # RetrospectiveQuestionGenerator interface + External/Mock 구현
 └── dto/           # *Request, *Response data class
 ```
 
@@ -289,33 +289,43 @@ POST /api/retrospectives/{id}/apply-template  body: { templateId }
 
 ### 3.4 AI 질문 생성
 
+> 2026-06-02 업데이트: 실제 구현은 백엔드 내부 Spring AI 호출이나 mock 데이터가 아니라 **외부 AI 서버 API 호출**로 진행한다. `http://127.0.0.1:8002`는 로컬 개발에서만 사용할 수 있는 예외값이며, dev/prod는 환경변수로 주입한 AI 서버 base URL을 사용한다. 최신 구현 계획은 §15를 우선한다.
+
 #### `POST /api/retrospectives/ai-questions`
-컨텍스트(회사·포지션·단계)를 LLM에 넘겨 질문 목록을 받아온다. **DB 미반영**.
+컨텍스트(공고명·회사명·직무명·단계명·질문 수)를 외부 AI 서버에 넘겨 회고 질문 목록을 받아온다. **DB 미반영**.
 
 **요청**
 ```json
-{ "applicationId": 101, "stageId": 5 }
+{ "applicationId": 101, "stageId": 5, "questionCount": 4 }
 ```
 
 **검증**
-- `applicationId` 필수, 요청자 소유
-- `stageId` 옵션, 있으면 요청자 소유
+- `applicationId` 필수, 양수, 요청자 소유
+- `stageId` 옵션, 있으면 요청자 소유. 없으면 Application의 현재 stage를 fallback으로 사용
+- `questionCount` 옵션. 기본값 4, 허용 범위 1..15
 
 **처리**
-1. `Application` lookup — `companyName`, `position`, `memo` 추출
-2. `stageId` 있으면 `Stage` lookup — `category`(IN_PROGRESS / PASSED / REJECTED)와 `name`
-3. `RetrospectiveQuestionGenerator.generate(context)` 호출 — `ai/` 구현이 system prompt + user 메시지 분리, JSON 스키마 강제(Spring AI structured output / function calling)
-4. 응답 검증 — 질문 개수 1..15개, 각 질문 NotBlank ≤ 1000자
-5. 응답 그대로 클라이언트에 반환. **`Suggestion` 엔티티 저장 없음**
+1. `Application` lookup — `jobPostingTitle`, `companyName`, `position` 추출
+2. `stageId`가 있으면 해당 `Stage` lookup. 없으면 `Application.stageId`의 현재 stage를 조회하고, 그래도 없으면 `"전체 전형"`으로 대체
+3. `AiRetrospectiveQuestionRequest`로 변환해 `{AI_RETROSPECTIVE_BASE_URL}/ai/retrospective/questions` 호출
+4. 외부 AI 응답 검증 — `questions` 1..15개, 각 `question` NotBlank ≤ 1000자
+5. AI 응답의 메타데이터를 camelCase 응답 DTO로 정규화해 클라이언트에 반환. **`Suggestion` 엔티티 저장 없음**
 
 **응답 200**
 ```json
 {
   "data": {
+    "questionSetTitle": "1차 기술면접 회고 질문",
+    "jobRole": "백엔드 개발자",
+    "processStage": "1차 기술면접",
     "questions": [
-      "면접에서 어려웠던 질문은 무엇이었나요?",
-      "지원 동기를 어떻게 답변했나요?",
-      "..."
+      {
+        "category": "technical_depth",
+        "question": "카카오 백엔드 기술면접에서 가장 답변이 부족했던 기술 개념은 무엇이었나요?",
+        "reason": "기술 보완 포인트를 찾기 위함입니다.",
+        "priority": "high",
+        "sourceTemplateIds": ["q_backend_interview_001"]
+      }
     ]
   }
 }
@@ -324,16 +334,17 @@ POST /api/retrospectives/{id}/apply-template  body: { templateId }
 **오류**
 - 4xx: 입력 검증 실패 (`INVALID_INPUT`, `APPLICATION_NOT_FOUND` 등)
 - 429: Rate Limit 초과 — `RATE_LIMITED`
-- 502: LLM 호출 실패 또는 응답 스키마 위반 — `AI_GENERATION_FAILED` (재시도 가능 표시)
-- 504: LLM 타임아웃 (8s) — `AI_GENERATION_TIMEOUT`
+- 502: 외부 AI API 호출 실패 또는 응답 스키마 위반 — `AI_GENERATION_FAILED` (재시도 가능 표시)
+- 504: 외부 AI API 타임아웃 (8s) — `AI_GENERATION_TIMEOUT`
 
 **Rate Limit**
 - 사용자별 **일 50회**. 메일 AI 100회/일과 별도 카운터. `global/`의 RateLimit 인프라(미구현 시 본 도메인 도입과 함께 stub) 사용.
 
-**프롬프트 가드레일**
-- `Application.companyName`, `position`, `memo` 등 사용자 입력은 user 메시지로만 전달, system 프롬프트와 분리
-- LLM 출력은 항상 JSON 스키마(`{ questions: string[] }`) 검증을 통과해야 함. 미통과 시 1회 재호출 후 실패 처리
-- Spring AI + GPT-4o-mini 사용 (`global/CLAUDE.md` 모델 정책)
+**외부 AI 호출 가드레일**
+- 백엔드는 프롬프트를 만들거나 모델을 직접 실행하지 않는다. 프롬프트/모델 관리는 AI 서버 책임이다.
+- 백엔드는 공고명, 회사명, 직무명, 단계명, 질문 수만 전송한다. 메일 본문이나 회고 답변 본문은 전송하지 않는다.
+- AI 서버 출력은 계약 JSON 스키마를 통과해야 한다. 파싱 실패, 필수 필드 누락, 유효 질문 0개는 `AI_GENERATION_FAILED`로 처리한다.
+- dev/prod 설정에서 `127.0.0.1:8002`를 기본값으로 두지 않는다.
 
 > **왜 `Suggestion` 엔티티를 안 쓰는가** — `Suggestion`은 비동기·다중 사용자 시간차 수락 흐름(메일 → 분류 → 알림 → 사용자가 며칠 후 수락) 모델. 회고 질문 생성은 사용자가 즉시 요청하는 동기 보조이고, 어차피 사용자가 프론트에서 골라 `POST /items`로 명시 추가하므로 "AI 결과 DB 직접 반영 금지" 원칙은 이미 준수됨.
 
@@ -386,19 +397,33 @@ Service (@Transactional)
 
 ### 4.4 AI 질문 생성 (DB 미반영)
 
+> 2026-06-02 업데이트: 아래 흐름의 `generator.generate(ctx)`는 mock 데이터 생성이나 백엔드 내부 모델 호출이 아니라 §15의 `ExternalRetrospectiveQuestionGenerator`가 외부 AI API를 호출하는 것으로 해석한다.
+
 ```
-POST /api/retrospectives/ai-questions  body: { applicationId: 101, stageId: 5 }
+POST /api/retrospectives/ai-questions  body: { applicationId: 101, stageId: 5, questionCount: 4 }
   ↓
 Service.generateQuestions(userId=99, request)  (no @Transactional — 읽기만 + 외부 호출)
-  ├─ rateLimiter.tryAcquire(userId, "retrospective-ai", limit=50/day) → RATE_LIMITED
   ├─ app   = appRepo.findByIdAndUserId(101, 99) → APPLICATION_NOT_FOUND
-  ├─ stage = stageId?.let { stageRepo.findByIdAndUserId(it, 99) } → STAGE_NOT_FOUND
-  ├─ ctx   = QuestionContext(app.companyName, app.position, app.memo, stage?.name, stage?.category)
-  ├─ result = generator.generate(ctx)              ← LLM 호출 (8s 타임아웃)
-  │     ├ 실패 → AI_GENERATION_FAILED (502)
+  ├─ stage = if (request.stageId != null)
+  │     stageRepo.findByIdAndUserId(request.stageId, 99) → STAGE_NOT_FOUND
+  │   else
+  │     app.stageId?.let { stageRepo.findByIdAndUserId(it, 99) } ?: fallback("전체 전형")
+  ├─ questionCount = request.questionCount ?: properties.defaultQuestionCount
+  ├─ validate questionCount in 1..properties.maxQuestionCount
+  ├─ rateLimiter.tryAcquire(userId, "retrospective-ai", limit=50/day) → RATE_LIMITED
+  ├─ aiRequest = {
+  │     user_id,
+  │     job_posting_title,
+  │     company_name,
+  │     job_role,
+  │     process_stage,
+  │     question_count
+  │   }
+  ├─ result = generator.generate(aiRequest)       ← 외부 AI API 호출 (read timeout 8s)
+  │     ├ 연결/HTTP/파싱 실패 → AI_GENERATION_FAILED (502)
   │     ├ 타임아웃 → AI_GENERATION_TIMEOUT (504)
-  │     └ 스키마 위반 → 1회 재시도 → 실패 시 AI_GENERATION_FAILED
-  └─ return { questions: result.questions.filter { it.isNotBlank() } }
+  │     └ 스키마 위반/유효 질문 0개 → AI_GENERATION_FAILED
+  └─ return RetrospectiveQuestionsResponse(result.toCamelCaseDto())
 ```
 
 ### 4.5 회고 삭제 / 카드 CASCADE
@@ -456,8 +481,8 @@ AI_GENERATION_TIMEOUT(GATEWAY_TIMEOUT, "AI_GENERATION_TIMEOUT", "AI 응답이 �
 
 - **모든 변경 Service 메서드 `@Transactional`** — `Retrospective`/`Template`의 dirty checking과 JSON 컬럼 직렬화가 한 단위.
 - **클래스 레벨 `@Transactional(readOnly = true)`** — 조회는 readOnly, 변경은 위에서 재선언.
-- **AI 질문 생성은 트랜잭션 없음** — DB write 없음. `Application`/`Stage` 조회는 별도 readOnly 트랜잭션 또는 트랜잭션 밖 단일 SELECT. LLM 호출이 트랜잭션을 잡지 않게 주의 (장기 트랜잭션 방지).
-- **Rate Limiter 갱신**은 LLM 호출 *전*에 카운터 +1, 호출 실패 시에도 차감하지 않음 (단순화). LLM 비용 보호가 목적이므로 호출되지 않은 케이스(검증 실패)도 카운트 안 하도록 주의 — 검증 통과 직후 한 번만 acquire.
+- **AI 질문 생성은 트랜잭션 없음** — DB write 없음. `Application`/`Stage` 조회는 별도 readOnly 트랜잭션 또는 트랜잭션 밖 단일 SELECT. 외부 AI API 호출이 트랜잭션을 잡지 않게 주의 (장기 트랜잭션 방지).
+- **Rate Limiter 갱신**은 외부 AI API 호출 *전*에 카운터 +1, 호출 실패 시에도 차감하지 않음 (단순화). AI 호출 비용 보호가 목적이므로 호출되지 않은 케이스(검증 실패)도 카운트 안 하도록 주의 — 검증 통과 직후 한 번만 acquire.
 - **JSON 컬럼 갱신은 전체 컬럼 재기록**이다 — `items` 변경 시 row 전체 UPDATE. v1 규모(items 평균 ≤ 30개, ≤ 수십 KB)에서는 무시.
 
 ---
@@ -471,7 +496,7 @@ AI_GENERATION_TIMEOUT(GATEWAY_TIMEOUT, "AI_GENERATION_TIMEOUT", "AI 응답이 �
 | 같은 템플릿 이름을 두 요청이 동시에 POST | UNIQUE 위반 | DB UNIQUE에 의존. `DataIntegrityViolationException` → `BusinessException(RETROSPECTIVE_TEMPLATE_DUPLICATE)` 변환 |
 | AI 호출 중 회고가 삭제됨 | AI 결과를 받아도 회고가 없음 | AI 응답은 회고와 무관(회고에 직접 쓰지 않음). 사용자가 받은 questions를 `POST /items`로 추가하려 하면 `RETROSPECTIVE_NOT_FOUND` |
 
-**왜 낙관적 락인가** — 단일 사용자 도메인이라 충돌 자체가 드물다(두 탭 동시 편집 정도). 비관적 락은 LLM 호출이 끼면 너무 무겁다. 빠른 두 번 클릭 같은 흔한 케이스만 방어하면 충분.
+**왜 낙관적 락인가** — 단일 사용자 도메인이라 충돌 자체가 드물다(두 탭 동시 편집 정도). 외부 AI 호출과 DB 편집 트랜잭션을 섞지 않으므로, 빠른 두 번 클릭 같은 흔한 케이스만 방어하면 충분.
 
 ---
 
@@ -480,9 +505,9 @@ AI_GENERATION_TIMEOUT(GATEWAY_TIMEOUT, "AI_GENERATION_TIMEOUT", "AI 응답이 �
 - [ ] 모든 Repository 메서드가 `userId` 조건 포함
 - [ ] 모든 Controller에 `@PreAuthorize("isAuthenticated()")` + `@CurrentUser`
 - [ ] 다른 사용자 리소스 조회 시 항상 **404** (존재 노출 방지)
-- [ ] AI 호출 전 `applicationId`/`stageId` 소유 검증 — 다른 사용자 정보가 LLM 프롬프트에 새지 않게
-- [ ] LLM 프롬프트: 사용자 입력은 user 메시지로만 전달, system 프롬프트와 분리 (Prompt Injection 방어)
-- [ ] LLM 응답은 JSON 스키마 검증 후 사용
+- [ ] AI 호출 전 `applicationId`/`stageId` 소유 검증 — 다른 사용자 정보가 외부 AI 서버에 새지 않게
+- [ ] 외부 AI 서버에는 공고명/회사명/직무명/단계명/질문 수만 전달하고, 메일 본문·회고 답변 본문은 전달하지 않음
+- [ ] AI 응답은 JSON 스키마 검증 후 사용
 - [ ] `question`, `answer`, `template.name`, `template.questions[*]`은 사용자 입력 그대로 저장 — XSS는 프론트 렌더링 책임. 서버는 길이 제한만
 - [ ] AI 호출 Rate Limit 적용 (50/일/사용자)
 
@@ -510,13 +535,15 @@ AI_GENERATION_TIMEOUT(GATEWAY_TIMEOUT, "AI_GENERATION_TIMEOUT", "AI 응답이 �
 - `create`: questions blank 항목 자동 필터링
 - `delete`: 이미 적용된 회고에 영향 없음 (다른 도메인 영향 없음 단위로 검증)
 
-**RetrospectiveQuestionServiceTest** (LLM mock)
+**RetrospectiveQuestionServiceTest** (외부 AI client mock)
 - `generate`: Rate Limit 초과 → `RATE_LIMITED`
 - `generate`: 다른 사용자 application → `APPLICATION_NOT_FOUND`
-- `generate`: LLM이 잘못된 JSON 반환 → 1회 재호출 후 `AI_GENERATION_FAILED`
-- `generate`: LLM 타임아웃 → `AI_GENERATION_TIMEOUT`
+- `generate`: `questionCount` 기본값/범위 검증
+- `generate`: `stageId` 생략 시 Application의 현재 stage fallback
+- `generate`: AI 서버가 잘못된 JSON 반환 → `AI_GENERATION_FAILED`
+- `generate`: AI 서버 타임아웃 → `AI_GENERATION_TIMEOUT`
 - `generate`: 정상 응답에서 blank/너무 긴 질문 필터링
-- prompt 빌더: 사용자 입력이 user 메시지에 들어가고 system 프롬프트에 escaping 없이 보간되지 않는지 (Prompt Injection 방어)
+- `ExternalRetrospectiveQuestionGenerator`: 요청 URL, 헤더, snake_case body, camelCase 응답 매핑 검증
 
 ### 10.2 통합 (Testcontainers — MySQL + Redis)
 
@@ -528,11 +555,11 @@ AI_GENERATION_TIMEOUT(GATEWAY_TIMEOUT, "AI_GENERATION_TIMEOUT", "AI 응답이 �
 - 같은 회고에 동시 POST /items 세 건 (재시도도 실패하는 케이스) → 최소 1개는 `RETROSPECTIVE_CONCURRENT_MODIFICATION` 응답
 - 템플릿 동일 이름 두 번 POST → 두 번째 `RETROSPECTIVE_TEMPLATE_DUPLICATE`
 - 다른 사용자의 모든 엔드포인트 → 404 (IDOR 회귀)
-- AI 엔드포인트: LLM은 mock으로 stub, Rate Limit 11회 호출 → 11번째 `RATE_LIMITED` (테스트는 limit=10으로 빈 설정)
+- AI 엔드포인트: 외부 AI API는 `MockRestServiceServer`로 stub, Rate Limit 11회 호출 → 11번째 `RATE_LIMITED` (테스트는 limit=10으로 빈 설정)
 
 ### 10.3 부하 (선택)
 - 사용자당 회고 100개, 평균 items 20개 상태에서 카드별 회고 목록 GET p95 측정 (목표 ≤ 200ms)
-- AI 엔드포인트는 LLM 외부 의존이라 본 도메인 부하 테스트 대상 아님
+- AI 엔드포인트는 외부 AI 서버 의존이라 본 도메인 부하 테스트 대상 아님
 
 ---
 
@@ -577,8 +604,8 @@ V13__unique_retrospective_templates_user_name.sql
 4. 항목 단위 엔드포인트 (POST/PATCH/DELETE items) + `@Version` 낙관적 락 + 재시도 어드바이스
 5. `RetrospectiveTemplate` 엔티티 + CRUD + UNIQUE 위반 핸들링
 6. `apply-template` 엔드포인트 + 통합 테스트 (스냅샷 회귀)
-7. `RetrospectiveQuestionGenerator` 인터페이스 정의 (`retrospective/ai/`) + `ai/` 도메인이 들어오기 전 stub 구현
-8. AI 엔드포인트 Controller/Service + Rate Limit 연동
+7. `RetrospectiveQuestionGenerator` 인터페이스 정의 (`retrospective/ai/`) + `ExternalRetrospectiveQuestionGenerator`/`MockRetrospectiveQuestionGenerator` 구현
+8. AI 엔드포인트 Controller/Service + Rate Limit + 외부 AI API 설정 연동
 9. 통합 테스트(Testcontainers) — IDOR 회귀, CASCADE, 낙관적 락, 템플릿 스냅샷
 10. CLAUDE.md의 "API 요약" 표 갱신, 본 tech.md §14 미구현 현황 갱신
 
@@ -610,7 +637,7 @@ V13__unique_retrospective_templates_user_name.sql
 | `stage/` (현재 `application/` 내부) lookup | ⚠️ 동일 | |
 | `auth/` JWT + `@CurrentUser` | ❌ 다른 도메인과 공유 미구현 | 모든 Controller가 의존 |
 | `global/ratelimit/` | ❌ 미구현 | AI 엔드포인트 도입 전 stub or 실 구현 필요 |
-| `ai/` 도메인의 `ChatClient` / Spring AI 설정 | ❌ 미구현 | `RetrospectiveQuestionGenerator` 기본 구현이 호출 |
+| 외부 AI API client 설정 (`base-url`, timeout, auth header) | ❌ 미구현 | `ExternalRetrospectiveQuestionGenerator` 도입 시 필요 |
 | Flyway 마이그레이션 인프라 | ❌ 미구현 (`ddl-auto=update` 추정) | 마이그레이션 도입과 함께 V8~V13 적용 |
 
 ### 14.3 인프라 / 횡단 관심사
@@ -619,7 +646,7 @@ V13__unique_retrospective_templates_user_name.sql
 |---|---|---|
 | 통합 테스트 (Testcontainers) | ❌ 미구현 | §10.2 시나리오 미커버 |
 | 부하 테스트 | ❌ 미구현 | 회고 100개 + items 20개 케이스 |
-| LLM 비용 모니터링 | ❌ 미구현 | `ai/` 도메인 책임. 본 도메인은 Rate Limit만 |
+| 외부 AI API 비용/latency 모니터링 | ❌ 미구현 | AI 서버/인프라 책임. 본 도메인은 Rate Limit과 호출 로그만 |
 | 응답 본문 XSS 방어 | ⚠️ 프론트 책임 | 서버는 길이 제한만 |
 
 ### 14.4 명시적 비범위 (이 도메인이 처리하지 않음)
@@ -628,3 +655,296 @@ V13__unique_retrospective_templates_user_name.sql
 - AI 메일 분류 → Suggestion — `ai/`, `mail/` 책임
 - 카드/단계 자체의 CRUD — `application/` 책임 (본 도메인은 ID로만 참조)
 - 외부 캘린더 export — `schedule/` 책임 (회고는 일정 아님)
+
+---
+
+## 15. 실제 AI 서버 연동 계획 (최신: 2026-06-02)
+
+본 절은 회고 질문 생성 모델을 mock 데이터에서 실제 AI 서버로 전환하기 위한 구현 계획이다. 기존에는 같은 EC2 안에서 `http://127.0.0.1:8002`를 호출할 수 있다는 전제가 있었지만, 서버 분리 이후에는 **백엔드 EC2와 AI 서버가 서로 다른 서버**라는 전제로 설계한다. 따라서 `127.0.0.1`은 로컬 개발에서만 유효하며, dev/prod는 환경변수로 주입한 AI 서버의 private DNS/IP 또는 HTTPS URL을 사용한다.
+
+### 15.1 목표 아키텍처
+
+```
+Frontend
+  └─ POST /api/retrospectives/ai-questions  (JWT)
+       ↓
+Backend EC2
+  ├─ userId 인증/인가
+  ├─ Application/Stage 소유권 검증
+  ├─ AI 서버 요청 DTO로 변환
+  └─ POST {AI_BASE_URL}/ai/retrospective/questions  (internal auth)
+       ↓
+AI Server
+  └─ 회고 질문 생성 응답
+       ↓
+Backend EC2
+  ├─ 응답 스키마/길이 검증
+  └─ ApiResponse로 프론트에 반환
+```
+
+프론트는 AI 서버를 직접 호출하지 않는다. 백엔드가 계속 인증, IDOR 방지, rate limit, 응답 정규화의 경계가 된다.
+
+### 15.2 외부 AI 서버 계약
+
+AI 서버 엔드포인트:
+
+```http
+POST /ai/retrospective/questions
+```
+
+AI 서버 요청:
+
+```json
+{
+  "user_id": 1,
+  "job_posting_title": "카카오 백엔드 개발자 채용",
+  "company_name": "카카오",
+  "job_role": "백엔드 개발자",
+  "process_stage": "1차 기술면접",
+  "question_count": 4
+}
+```
+
+AI 서버 응답:
+
+```json
+{
+  "question_set_title": "1차 기술면접 회고 질문",
+  "job_role": "백엔드 개발자",
+  "process_stage": "1차 기술면접",
+  "questions": [
+    {
+      "category": "technical_depth",
+      "question": "카카오 백엔드 기술면접에서 가장 답변이 부족했던 기술 개념은 무엇이었나요?",
+      "reason": "기술 보완 포인트를 찾기 위함입니다.",
+      "priority": "high",
+      "source_template_ids": ["q_backend_interview_001"]
+    }
+  ]
+}
+```
+
+백엔드 내부 DTO는 AI 서버 계약에 맞춰 snake_case를 명시한다.
+
+```kotlin
+data class AiRetrospectiveQuestionRequest(
+    @JsonProperty("user_id")
+    val userId: Long,
+    @JsonProperty("job_posting_title")
+    val jobPostingTitle: String,
+    @JsonProperty("company_name")
+    val companyName: String,
+    @JsonProperty("job_role")
+    val jobRole: String,
+    @JsonProperty("process_stage")
+    val processStage: String,
+    @JsonProperty("question_count")
+    val questionCount: Int,
+)
+```
+
+### 15.3 백엔드 공개 API 계약 변경
+
+현재 백엔드 공개 API는 다음 엔드포인트를 유지한다.
+
+```http
+POST /api/retrospectives/ai-questions
+```
+
+요청 DTO는 질문 수를 받을 수 있게 확장한다.
+
+```json
+{
+  "applicationId": 101,
+  "stageId": 5,
+  "questionCount": 4
+}
+```
+
+검증 규칙:
+- `applicationId`: 필수, 양수, 요청자 소유.
+- `stageId`: 옵션. 값이 있으면 요청자 소유. 없으면 `Application.stageId`의 현재 단계를 사용하고, 조회 실패 시 `"전체 전형"`으로 대체.
+- `questionCount`: 옵션. 기본값 4, 허용 범위 1..15.
+
+백엔드 응답은 AI 서버의 메타데이터를 보존하는 형태로 확장한다.
+
+```json
+{
+  "data": {
+    "questionSetTitle": "1차 기술면접 회고 질문",
+    "jobRole": "백엔드 개발자",
+    "processStage": "1차 기술면접",
+    "questions": [
+      {
+        "category": "technical_depth",
+        "question": "카카오 백엔드 기술면접에서 가장 답변이 부족했던 기술 개념은 무엇이었나요?",
+        "reason": "기술 보완 포인트를 찾기 위함입니다.",
+        "priority": "high",
+        "sourceTemplateIds": ["q_backend_interview_001"]
+      }
+    ]
+  },
+  "meta": { "...": "..." }
+}
+```
+
+기존 프론트가 문자열 배열만 필요하면 `questions[].question`만 사용한다. 단, 서버에서 메타데이터를 버리지 않는다.
+
+### 15.4 필드 매핑
+
+| AI 요청 필드 | 백엔드 소스 | 비고 |
+|---|---|---|
+| `user_id` | 인증된 `userId` | 프론트 입력값을 믿지 않음 |
+| `job_posting_title` | `Application.jobPostingTitle` | 현재 `Application`에 필드가 없으므로 추가 필요. 기존 row는 `"${companyName} ${position} 채용"`으로 fallback |
+| `company_name` | `Application.companyName` | 필수 |
+| `job_role` | `Application.position` | 현재 도메인명은 position이지만 AI 계약에는 job_role로 전달 |
+| `process_stage` | `Stage.name` | 요청 `stageId` 우선, 없으면 `Application.stageId`, 그래도 없으면 `"전체 전형"` |
+| `question_count` | `RetrospectiveQuestionRequest.questionCount ?: 4` | 1..15 검증 |
+
+`jobPostingTitle`은 실제 공고명 품질을 위해 추가하는 것이 권장된다.
+
+추가 대상:
+- `Application` 엔티티 nullable 컬럼 `job_posting_title`
+- `CreateApplicationRequest`, `UpdateApplicationRequest`, `ApplicationResponse`, `BoardResponse`
+- 기존 데이터 fallback 로직
+
+### 15.5 구현 컴포넌트
+
+새 구성:
+
+```
+retrospective/
+├── ai/
+│   ├── RetrospectiveQuestionGenerator.kt          # 기존 interface 유지
+│   ├── ExternalRetrospectiveQuestionGenerator.kt  # 실제 AI 서버 HTTP 호출
+│   ├── MockRetrospectiveQuestionGenerator.kt      # local/test fallback
+│   ├── RetrospectiveAiClientProperties.kt
+│   └── RetrospectiveAiDtos.kt
+└── service/
+    └── RetrospectiveQuestionService.kt            # 소유권 검증 + rate limit + generator 호출
+```
+
+HTTP 클라이언트는 `spring-boot-starter-webmvc`에 포함된 `RestClient`를 우선 사용한다. WebFlux 의존성을 추가해야 하는 `WebClient`는 v1에서 쓰지 않는다.
+
+Bean 선택:
+
+```kotlin
+@ConditionalOnProperty(
+    prefix = "cheerup.ai.retrospective",
+    name = ["mode"],
+    havingValue = "external",
+    matchIfMissing = true,
+)
+class ExternalRetrospectiveQuestionGenerator(...)
+
+@ConditionalOnProperty(
+    prefix = "cheerup.ai.retrospective",
+    name = ["mode"],
+    havingValue = "mock",
+)
+class MockRetrospectiveQuestionGenerator(...)
+```
+
+현재 `DefaultRetrospectiveQuestionGenerator`는 `MockRetrospectiveQuestionGenerator`로 이름을 바꾸고 local/test 전용으로 제한한다.
+
+### 15.6 설정
+
+공통 설정 키:
+
+```yaml
+cheerup:
+  ai:
+    retrospective:
+      mode: external
+      base-url: ${AI_RETROSPECTIVE_BASE_URL}
+      question-path: /ai/retrospective/questions
+      api-key: ${AI_INTERNAL_API_KEY:}
+      connect-timeout: 1s
+      read-timeout: 8s
+      default-question-count: 4
+      max-question-count: 15
+```
+
+프로파일별 원칙:
+- `local`: 기본은 `mode: mock`. 실제 로컬 AI 서버를 띄운 경우 `AI_RETROSPECTIVE_BASE_URL=http://127.0.0.1:8002`로 override.
+- `dev`: `AI_RETROSPECTIVE_BASE_URL` 필수. 가능하면 private DNS 또는 private IP 사용.
+- `prod`: `AI_RETROSPECTIVE_BASE_URL`, `AI_INTERNAL_API_KEY` 필수. 누락 시 애플리케이션 부팅 실패가 맞다.
+
+dev/prod에서 `127.0.0.1`을 기본값으로 두지 않는다. 서버가 분리된 상태에서 `127.0.0.1`은 백엔드 EC2 자신을 가리키므로 장애가 된다.
+
+### 15.7 네트워크와 보안
+
+- AI 서버가 같은 VPC/private subnet에 있으면 AI 서버 security group inbound는 백엔드 EC2 security group만 허용한다.
+- 다른 VPC/외부망이면 HTTPS를 사용하고, 백엔드는 `X-Internal-Api-Key: {AI_INTERNAL_API_KEY}` 헤더를 붙인다.
+- 프론트 JWT를 AI 서버에 전달하지 않는다. AI 서버는 백엔드 내부 인증 헤더만 검증한다.
+- `X-Request-Id`를 AI 서버 호출에도 전달해 백엔드 로그와 AI 서버 로그를 연결한다.
+- request/response 본문 전체를 info 로그로 남기지 않는다. 로그에는 `userId`, `applicationId`, latency, HTTP status, requestId 정도만 남긴다.
+- 이 기능은 공고명/회사명/직무명/단계명만 전송한다. 메일 본문은 전송하지 않고 저장하지 않는다.
+
+### 15.8 장애 처리 정책
+
+| 상황 | 백엔드 처리 |
+|---|---|
+| DNS 실패, connection refused | `AI_GENERATION_FAILED` |
+| connection timeout | `AI_GENERATION_TIMEOUT` |
+| read timeout 8s 초과 | `AI_GENERATION_TIMEOUT` |
+| AI 서버 4xx | 백엔드 계약/매핑 오류로 보고 `AI_GENERATION_FAILED` |
+| AI 서버 5xx | `AI_GENERATION_FAILED` |
+| AI 서버 429 | 사용자 rate limit과 혼동하지 않도록 v1은 `AI_GENERATION_FAILED`로 매핑 |
+| JSON 파싱 실패 | `AI_GENERATION_FAILED` |
+| `questions`가 비어 있음 | `AI_GENERATION_FAILED` |
+| 질문이 1000자 초과 또는 blank | 해당 항목 제거. 제거 후 0개면 `AI_GENERATION_FAILED` |
+
+자동 재시도는 v1에서 하지 않는다. 이 API는 사용자 동기 요청이고, AI 호출 비용이 있으므로 프론트의 명시적 재시도 버튼으로 처리한다.
+
+Rate limit은 현재처럼 소유권 검증 이후, 외부 AI 호출 직전에 차감한다. 외부 호출 실패 시에도 차감 복구는 하지 않는다.
+
+### 15.9 테스트 계획
+
+단위 테스트:
+- `RetrospectiveQuestionServiceTest`: `questionCount` 기본값/범위, `stageId` 생략 시 application stage fallback, rate limit 순서 검증.
+- `ExternalRetrospectiveQuestionGeneratorTest`: AI 서버 요청 URL, header, snake_case body 매핑 검증.
+- AI 서버 정상 응답을 camelCase 백엔드 응답으로 변환하는지 검증.
+- 4xx/5xx/timeout/invalid JSON/empty questions를 각각 `RetrospectiveQuestionGenerationException` 또는 `RetrospectiveQuestionTimeoutException`으로 변환하는지 검증.
+
+통합 성격 테스트:
+- `MockRestServiceServer`로 외부 AI 서버를 대체해 controller → service → generator 전체 흐름 검증.
+- sample payload를 고정 fixture로 두고 계약 회귀 테스트를 추가한다.
+- `local/test` 프로파일에서 mock generator가 선택되고, `dev/prod` 프로파일에서 external generator가 선택되는지 검증한다.
+
+수동 smoke test:
+
+```bash
+curl -X POST "$AI_RETROSPECTIVE_BASE_URL/ai/retrospective/questions" \
+  -H "Content-Type: application/json" \
+  -H "X-Internal-Api-Key: $AI_INTERNAL_API_KEY" \
+  -d '{
+    "user_id": 1,
+    "job_posting_title": "카카오 백엔드 개발자 채용",
+    "company_name": "카카오",
+    "job_role": "백엔드 개발자",
+    "process_stage": "1차 기술면접",
+    "question_count": 4
+  }'
+```
+
+### 15.10 배포 체크리스트
+
+1. AI 서버팀과 `/ai/retrospective/questions` 요청/응답 스키마, timeout, 인증 헤더를 확정한다.
+2. AI 서버가 dev/prod에서 접근 가능한 base URL을 제공한다. dev/prod에 `127.0.0.1`을 사용하지 않는다.
+3. 백엔드 EC2 security group egress와 AI 서버 inbound를 연결한다.
+4. `AI_RETROSPECTIVE_BASE_URL`, `AI_INTERNAL_API_KEY`를 dev/prod secret으로 등록한다.
+5. 백엔드에 external generator와 properties를 추가하고, mock generator는 local/test 전용으로 제한한다.
+6. `Application.jobPostingTitle` 추가 여부를 결정한다. 추가한다면 마이그레이션/DTO/응답까지 같이 반영한다.
+7. `RetrospectiveQuestionRequest`에 `questionCount`를 추가하고 Swagger 문서를 갱신한다.
+8. AI 응답 메타데이터를 보존하는 `RetrospectiveQuestionsResponse`로 확장한다.
+9. 단위/통합 테스트를 추가한 뒤 `./gradlew test`를 통과시킨다.
+10. dev에서 백엔드 API를 호출해 AI 서버까지 실제 왕복되는지 latency와 로그 requestId를 확인한다.
+
+### 15.11 완료 기준
+
+- `DefaultRetrospectiveQuestionGenerator` mock 질문이 dev/prod에서 더 이상 사용되지 않는다.
+- 백엔드 `POST /api/retrospectives/ai-questions` 호출 시 별도 AI 서버의 실제 응답이 반환된다.
+- AI 서버 장애 시 프론트가 기존 오류 코드(`AI_GENERATION_FAILED`, `AI_GENERATION_TIMEOUT`, `RATE_LIMITED`)로 분기할 수 있다.
+- dev/prod 설정에서 `127.0.0.1:8002` 의존이 사라진다.
+- 테스트에서 AI 서버 계약 payload와 응답 스키마가 고정 fixture로 검증된다.
