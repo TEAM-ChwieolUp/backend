@@ -313,4 +313,9 @@ class StageServiceTest {
         ReflectionTestUtils.setField(stage, "id", id)
         return stage
     }
+
+    private fun Stage.persistedWithId(id: Long): Stage {
+        ReflectionTestUtils.setField(this, "id", id)
+        return this
+    }
 }
