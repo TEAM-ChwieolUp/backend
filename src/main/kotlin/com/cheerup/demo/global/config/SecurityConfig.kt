@@ -7,19 +7,25 @@ import com.cheerup.demo.global.jwt.JwtProperties
 import com.cheerup.demo.global.oauth.CustomOAuth2UserService
 import com.cheerup.demo.global.oauth.CustomOidcUserService
 import com.cheerup.demo.global.oauth.OAuth2AuthenticationSuccessHandler
+import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpMethod
 import org.springframework.security.config.Customizer
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.CorsConfigurationSource
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(JwtProperties::class)
+@EnableConfigurationProperties(JwtProperties::class, CorsProperties::class)
 class SecurityConfig(
     private val jwtAuthenticationFilter: JwtAuthenticationFilter,
     private val jwtAuthenticationEntryPoint: JwtAuthenticationEntryPoint,
@@ -27,7 +33,34 @@ class SecurityConfig(
     private val customOAuth2UserService: CustomOAuth2UserService,
     private val customOidcUserService: CustomOidcUserService,
     private val oAuth2AuthenticationSuccessHandler: OAuth2AuthenticationSuccessHandler,
+    private val corsProperties: CorsProperties,
 ) {
+
+    @Bean
+    fun corsConfigurationSource(): CorsConfigurationSource {
+        val configuration = CorsConfiguration().apply {
+            allowedOrigins = corsProperties.allowedOrigins
+            allowedMethods = listOf(
+                HttpMethod.GET.name(),
+                HttpMethod.POST.name(),
+                HttpMethod.PUT.name(),
+                HttpMethod.PATCH.name(),
+                HttpMethod.DELETE.name(),
+                HttpMethod.OPTIONS.name(),
+            )
+            allowedHeaders = listOf(
+                HttpHeaders.AUTHORIZATION,
+                HttpHeaders.CONTENT_TYPE,
+                HttpHeaders.ACCEPT,
+                "X-Requested-With",
+            )
+            allowCredentials = true
+        }
+
+        return UrlBasedCorsConfigurationSource().apply {
+            registerCorsConfiguration("/**", configuration)
+        }
+    }
 
     @Bean
     fun securityFilterChain(http: HttpSecurity): SecurityFilterChain =
@@ -39,6 +72,7 @@ class SecurityConfig(
             .authorizeHttpRequests {
                 it.requestMatchers(
                     "/api/auth/**",
+                    "/api/mail/integrations/oauth/*/callback",
                     "/oauth2/**",
                     "/login/**",
                     "/swagger-ui.html",
@@ -64,3 +98,8 @@ class SecurityConfig(
             .cors(Customizer.withDefaults())
             .build()
 }
+
+@ConfigurationProperties(prefix = "app.cors")
+data class CorsProperties(
+    val allowedOrigins: List<String> = listOf("http://localhost:3000"),
+)

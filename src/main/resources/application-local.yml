@@ -3,7 +3,7 @@ spring:
     activate:
       on-profile: local
     import:
-      - backend-security/application-security.yml
+      - optional:backend-security/application-security.yml
 
   datasource:
     url: jdbc:mysql://localhost:3316/cheerup?serverTimezone=UTC&characterEncoding=UTF-8
@@ -24,6 +24,37 @@ spring:
         format_sql: true
 
 app:
+  auth:
+    oauth2:
+      success-redirect-uri: http://localhost:3000/auth/callback
+    refresh-token-cookie:
+      secure: false
+  mail:
+    classifier:
+      mode: stub
+    clients:
+      google: gmail
+      naver: disabled
+      outlook: disabled
+    gmail:
+      message-query: newer_than:30d
+      max-results: 50
+      token-refresh-skew-seconds: 60
+    oauth:
+      state-ttl-minutes: 10
+      frontend-success-redirect-uri: http://localhost:3000/mail/integrations/success
+      frontend-failure-redirect-uri: http://localhost:3000/mail/integrations/failure
+      providers:
+        google:
+          redirect-uri: http://localhost:8080/api/mail/integrations/oauth/google/callback
+          authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
+          token-uri: https://oauth2.googleapis.com/token
+          user-info-uri: https://openidconnect.googleapis.com/v1/userinfo
+          scopes:
+            - openid
+            - email
+            - profile
+            - https://www.googleapis.com/auth/gmail.readonly
   openapi:
     servers:
       - url: http://localhost:8080
