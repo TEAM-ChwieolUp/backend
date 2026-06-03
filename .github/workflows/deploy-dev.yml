@@ -12,6 +12,8 @@ permissions:
 env:
   IMAGE_NAME: ghcr.io/team-chwieolup/backend
   DEPLOY_PATH: ${{ secrets.DEV_DEPLOY_PATH || '/opt/cheerup/backend' }}
+  REDIS_HOST: ${{ secrets.REDIS_HOST }}
+  REDIS_PORT: ${{ secrets.REDIS_PORT }}
 
 jobs:
   test:
@@ -125,6 +127,8 @@ jobs:
             "MYSQL_USER" => mysql["user"] || datasource["username"],
             "MYSQL_PASSWORD" => mysql["password"] || datasource["password"],
             "MYSQL_ROOT_PASSWORD" => mysql["root-password"],
+            "REDIS_HOST" => ENV["REDIS_HOST"],
+            "REDIS_PORT" => ENV["REDIS_PORT"],
           }
 
           missing = values.select { |_, value| value.to_s.empty? }.keys

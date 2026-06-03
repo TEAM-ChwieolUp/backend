@@ -19,12 +19,16 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: dev
       SPRING_CONFIG_IMPORT: optional:file:/app/config/application-security.yml
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST}
+      SPRING_DATA_REDIS_PORT: ${REDIS_PORT}
     volumes:
       - ./application-security.yml:/app/config/application-security.yml:ro
     expose:
       - "8080"
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   mysql:
@@ -46,5 +50,21 @@ services:
       retries: 10
       start_period: 20s
 
+  redis:
+    image: redis:7.2-alpine
+    container_name: cheerup-redis-dev
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    expose:
+      - "6379"
+    volumes:
+      - cheerup_redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   cheerup_mysql_dev_data:
+  cheerup_redis_dev_data:
