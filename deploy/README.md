@@ -28,10 +28,19 @@ DEV_DEPLOY_PATH
 GHCR_USERNAME
 GHCR_TOKEN
 BACKEND_SECURITY_TOKEN
+REDIS_HOST
+REDIS_PORT
 ```
 
 `BACKEND_SECURITY_TOKEN` should be a fine-grained PAT that can read only the
 `TEAM-ChwieolUp/backend-security` repository contents.
+
+Redis deployment secrets for the bundled Compose Redis service:
+
+```text
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
 
 ## Dev Server Prerequisites
 
@@ -65,9 +74,9 @@ docker compose version
 mkdir -p /home/ubuntu/cheerup/backend
 ```
 
-Open inbound TCP 80 and 443 in the dev server security group. Port 8080 does
-not need to be exposed publicly because Nginx proxies to the app over the
-Compose network.
+Open inbound TCP 80 and 443 in the dev server security group. Ports 8080 and
+6379 do not need to be exposed publicly because Nginx and the application use
+the Compose network.
 
 ## backend-security Requirements
 
