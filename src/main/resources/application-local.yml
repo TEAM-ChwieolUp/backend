@@ -59,8 +59,3 @@ app:
     servers:
       - url: http://localhost:8080
         description: Local server
-
-cheerup:
-  ai:
-    retrospective:
-      base-url: ${AI_RETROSPECTIVE_BASE_URL}
