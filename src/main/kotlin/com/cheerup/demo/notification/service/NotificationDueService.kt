@@ -45,7 +45,8 @@ class NotificationDueService(
             NotificationSourceType.SCHEDULE_EVENT -> {
                 val event = scheduleEventRepository.findByIdAndUserId(item.sourceId, item.userId)
                     ?: return true
-                if (alreadyCreated(item, event.startAt)) {
+                val scheduledAt = event.notificationAt()
+                if (alreadyCreated(item, scheduledAt)) {
                     return true
                 }
                 val message = messageFactory.scheduleEvent(event, item.remindType)
@@ -57,7 +58,7 @@ class NotificationDueService(
                     remindType = item.remindType,
                     title = message.title,
                     message = message.message,
-                    scheduledAt = event.startAt,
+                    scheduledAt = scheduledAt,
                 )
             }
         }
