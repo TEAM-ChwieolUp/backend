@@ -34,9 +34,10 @@ class ScheduleEventCommandService(
         validateApplicationReference(userId, request.category, request.applicationId)
 
         if (request.category == ScheduleCategory.JOB_POSTING &&
+            request.applicationId != null &&
             scheduleEventRepository.existsByUserIdAndApplicationIdAndCategory(
                 userId = userId,
-                applicationId = requireNotNull(request.applicationId),
+                applicationId = request.applicationId,
                 category = ScheduleCategory.JOB_POSTING,
             )
         ) {
@@ -127,9 +128,14 @@ class ScheduleEventCommandService(
                 }
             }
 
-            ScheduleCategory.JOB_POSTING,
-            ScheduleCategory.APPLICATION_PROCESS,
-            -> {
+            ScheduleCategory.JOB_POSTING -> {
+                if (applicationId != null) {
+                    applicationRepository.findByIdAndUserId(applicationId, userId)
+                        ?: throw BusinessException(ErrorCode.APPLICATION_NOT_FOUND, detail = "applicationId=$applicationId")
+                }
+            }
+
+            ScheduleCategory.APPLICATION_PROCESS -> {
                 if (applicationId == null) {
                     invalidInput("$category schedule requires applicationId")
                 }

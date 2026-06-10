@@ -18,7 +18,7 @@
 
 ```kotlin
 enum class ScheduleCategory {
-    JOB_POSTING,            // 채용공고 데이터 (마감/접수 시작/설명회 등) — DB 저장, applicationId 필수
+    JOB_POSTING,            // 채용공고 데이터 (마감/접수 시작/설명회 등) — DB 저장, applicationId 선택
     APPLICATION_PROCESS,    // 채용 전형 (면접/코테/발표)
     PERSONAL,               // 개인 일정
 }
@@ -28,7 +28,7 @@ enum class ScheduleCategory {
 
 | 카테고리 | DB 저장 여부 | 출처 | `applicationId` |
 |---|---|---|---|
-| `JOB_POSTING` | ✅ `ScheduleEvent` | 사용자 수동 등록 또는 메일에서 추출 (`Application.deadlineAt` 변경 시 Service가 동기화) | NOT NULL |
+| `JOB_POSTING` | ✅ `ScheduleEvent` | 사용자 수동 등록 또는 메일에서 추출 (`Application.deadlineAt` 변경 시 Service가 동기화) | nullable |
 | `APPLICATION_PROCESS` | ✅ `ScheduleEvent` | 사용자 수동 등록 또는 메일에서 추출 | NOT NULL |
 | `PERSONAL` | ✅ `ScheduleEvent` | 사용자 수동 등록 | null |
 
@@ -137,14 +137,15 @@ class ScheduleEvent(
 | Method | Path | 설명 |
 |---|---|---|
 | GET | `/api/schedule/calendar?from=...&to=...&category=...` | 달력 조회 (마감일 변환 + ScheduleEvent 통합) |
-| POST | `/api/schedule/events` | 일정 등록 (`APPLICATION_PROCESS` 또는 `PERSONAL`) |
+| POST | `/api/schedule/events` | 일정 등록 (`JOB_POSTING`, `APPLICATION_PROCESS`, `PERSONAL`) |
 | PATCH | `/api/schedule/events/{id}` | 일정 수정 |
 | DELETE | `/api/schedule/events/{id}` | 일정 삭제 |
 | GET | `/api/schedule/events/{id}/export` | iCalendar(`.ics`) 파일 다운로드 (외부 캘린더 import용) |
 
 ## 검증 규칙 (Service)
 
-- `category = JOB_POSTING` 또는 `APPLICATION_PROCESS`인 경우 `applicationId` 필수 (없으면 `INVALID_INPUT`)
+- `category = JOB_POSTING`인 경우 `applicationId` 선택. 값이 있으면 요청자 소유 Application이어야 함
+- `category = APPLICATION_PROCESS`인 경우 `applicationId` 필수 (없으면 `INVALID_INPUT`)
 - `category = PERSONAL`인 경우 `applicationId`는 null
-- 모든 카테고리에서 `applicationId`는 동일 `userId` 소유의 Application이어야 함 (IDOR 방지)
+- `applicationId` 값이 있는 경우 동일 `userId` 소유의 Application이어야 함 (IDOR 방지)
 - `endAt < startAt`이면 `INVALID_INPUT`
