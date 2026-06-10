@@ -48,21 +48,21 @@ class RedisNotificationQueueTest {
             zSetOperations.add(
                 RedisNotificationQueue.DUE_KEY,
                 "APPLICATION:101:D_MINUS_3:99",
-                Instant.parse("2026-06-07T09:00:00Z").toEpochMilli().toDouble(),
+                Instant.parse("2026-06-07T00:00:00Z").toEpochMilli().toDouble(),
             )
         }
         verify(exactly = 1) {
             zSetOperations.add(
                 RedisNotificationQueue.DUE_KEY,
                 "APPLICATION:101:D_MINUS_1:99",
-                Instant.parse("2026-06-09T09:00:00Z").toEpochMilli().toDouble(),
+                Instant.parse("2026-06-09T00:00:00Z").toEpochMilli().toDouble(),
             )
         }
         verify(exactly = 1) {
             zSetOperations.add(
                 RedisNotificationQueue.DUE_KEY,
                 "APPLICATION:101:D_DAY:99",
-                Instant.parse("2026-06-10T09:00:00Z").toEpochMilli().toDouble(),
+                Instant.parse("2026-06-10T00:00:00Z").toEpochMilli().toDouble(),
             )
         }
     }
@@ -87,7 +87,7 @@ class RedisNotificationQueueTest {
             zSetOperations.add(
                 RedisNotificationQueue.DUE_KEY,
                 "APPLICATION:101:D_MINUS_3:99",
-                Instant.parse("2026-06-09T09:00:00Z").toEpochMilli().toDouble(),
+                Instant.parse("2026-06-09T00:00:00Z").toEpochMilli().toDouble(),
             )
         }
     }
