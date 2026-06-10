@@ -2,9 +2,11 @@ package com.cheerup.demo.mail.classifier
 
 import com.cheerup.demo.application.domain.StageCategory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.context.annotation.Primary
 import org.springframework.stereotype.Component
 
 @Component
+@Primary
 @ConditionalOnProperty(
     prefix = "app.mail.classifier",
     name = ["mode"],

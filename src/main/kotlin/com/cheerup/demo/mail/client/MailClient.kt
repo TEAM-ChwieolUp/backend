@@ -7,6 +7,8 @@ interface MailClient {
     fun supports(provider: MailProvider): Boolean
 
     fun listMessages(integration: MailIntegrationContext, limit: Int): List<MailMessageCandidate>
+
+    fun getMessageContent(integration: MailIntegrationContext, messageId: String): MailMessageContent
 }
 
 data class MailMessageCandidate(
@@ -19,4 +21,9 @@ data class MailMessageCandidate(
     val from: String,
     val receivedAt: Instant,
     val snippet: String,
+)
+
+data class MailMessageContent(
+    val subject: String,
+    val body: String,
 )

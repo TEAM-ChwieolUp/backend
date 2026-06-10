@@ -182,6 +182,28 @@ class ApplicationService(
         return application.toResponse(currentTagSummaries(applicationId, userId))
     }
 
+    @Transactional
+    fun applyAiStageSuggestion(
+        userId: Long,
+        applicationId: Long,
+        expectedFromStageId: Long,
+        toStageId: Long,
+    ): ApplicationResponse {
+        val application = applicationRepository.findByIdAndUserId(applicationId, userId)
+            ?: throw BusinessException(ErrorCode.APPLICATION_NOT_FOUND, detail = "applicationId=$applicationId")
+        if (application.stageId != expectedFromStageId) {
+            throw BusinessException(
+                ErrorCode.SUGGESTION_STALE,
+                detail = "expectedStageId=$expectedFromStageId, actualStageId=${application.stageId}",
+            )
+        }
+        stageRepository.findByIdAndUserId(toStageId, userId)
+            ?: throw BusinessException(ErrorCode.STAGE_NOT_FOUND, detail = "stageId=$toStageId")
+
+        application.changeStage(toStageId)
+        return application.toResponse(currentTagSummaries(applicationId, userId))
+    }
+
     private fun currentTagSummaries(applicationId: Long, userId: Long): List<TagSummary> =
         applicationTagRepository
             .findTagViewsByApplicationIds(listOf(applicationId), userId)

@@ -5,6 +5,10 @@ import com.cheerup.demo.global.config.swagger.SwaggerErrorResponses
 import com.cheerup.demo.global.exception.ErrorCode
 import com.cheerup.demo.global.response.ApiResponse
 import com.cheerup.demo.mail.dto.ClassifiedMailMessagesResponse
+import com.cheerup.demo.mail.domain.MailSuggestionStatus
+import com.cheerup.demo.mail.dto.AnalyzeMailSuggestionRequest
+import com.cheerup.demo.mail.dto.MailSuggestionResponse
+import com.cheerup.demo.mail.dto.MailSuggestionsResponse
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.security.SecurityRequirement
@@ -38,4 +42,59 @@ interface MailApi {
         @Parameter(hidden = true) userId: Long,
         @Parameter(description = "조회 개수", example = "20") limit: Int,
     ): ApiResponse<ClassifiedMailMessagesResponse>
+
+    @Operation(
+        summary = "메일 AI 분석 및 칸반 이동 제안 생성",
+        description = """
+            사용자가 선택한 메일 한 건과 채용 카드 한 건을 AI 서버로 분석합니다.
+            메일 전체 본문은 외부 AI 호출 동안만 메모리에 유지하고 DB나 응답에 저장하지 않습니다.
+            단계 분류와 칸반 이동 추천 결과는 Suggestion으로 저장되며, 카드는 수락 API 호출 전까지 변경되지 않습니다.
+        """,
+    )
+    @SecurityRequirement(name = "bearerAuth")
+    @SwaggerErrorResponses(
+        errors = [
+            SwaggerErrorResponse(ErrorCode.UNAUTHORIZED),
+            SwaggerErrorResponse(ErrorCode.INVALID_INPUT),
+            SwaggerErrorResponse(ErrorCode.MAIL_INTEGRATION_NOT_FOUND),
+            SwaggerErrorResponse(ErrorCode.APPLICATION_NOT_FOUND),
+            SwaggerErrorResponse(ErrorCode.STAGE_NOT_FOUND),
+            SwaggerErrorResponse(ErrorCode.MAIL_PROVIDER_API_FAILED),
+            SwaggerErrorResponse(ErrorCode.AI_GENERATION_FAILED),
+            SwaggerErrorResponse(ErrorCode.AI_GENERATION_TIMEOUT),
+        ],
+    )
+    fun analyzeSuggestion(
+        @Parameter(hidden = true) userId: Long,
+        request: AnalyzeMailSuggestionRequest,
+    ): ApiResponse<MailSuggestionResponse>
+
+    @Operation(summary = "메일 AI 제안 목록 조회")
+    @SecurityRequirement(name = "bearerAuth")
+    fun listSuggestions(
+        @Parameter(hidden = true) userId: Long,
+        status: MailSuggestionStatus,
+    ): ApiResponse<MailSuggestionsResponse>
+
+    @Operation(summary = "메일 AI 칸반 이동 제안 수락")
+    @SecurityRequirement(name = "bearerAuth")
+    @SwaggerErrorResponses(
+        errors = [
+            SwaggerErrorResponse(ErrorCode.SUGGESTION_NOT_FOUND),
+            SwaggerErrorResponse(ErrorCode.SUGGESTION_NOT_ACTIONABLE),
+            SwaggerErrorResponse(ErrorCode.SUGGESTION_ALREADY_PROCESSED),
+            SwaggerErrorResponse(ErrorCode.SUGGESTION_STALE),
+        ],
+    )
+    fun acceptSuggestion(
+        @Parameter(hidden = true) userId: Long,
+        id: Long,
+    ): ApiResponse<MailSuggestionResponse>
+
+    @Operation(summary = "메일 AI 칸반 이동 제안 거절")
+    @SecurityRequirement(name = "bearerAuth")
+    fun rejectSuggestion(
+        @Parameter(hidden = true) userId: Long,
+        id: Long,
+    ): ApiResponse<MailSuggestionResponse>
 }

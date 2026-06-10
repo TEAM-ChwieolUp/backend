@@ -33,10 +33,13 @@ app:
 
 cheerup:
   ai:
-    retrospective:
-      question-path: /ai/retrospective/questions
+    server:
       connect-timeout: 1s
-      read-timeout: 8s
+      read-timeout: 30s
+      mail-stage-classify-path: /ai/mail/stage-classify
+      kanban-move-recommend-path: /ai/kanban/move-recommend
+      retrospective-questions-path: /ai/retrospective/questions
+    retrospective:
       default-question-count: 4
-      max-question-count: 15
+      max-question-count: 10
       daily-limit: 50

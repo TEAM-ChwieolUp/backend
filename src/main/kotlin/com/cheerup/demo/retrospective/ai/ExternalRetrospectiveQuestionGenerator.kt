@@ -1,17 +1,16 @@
 package com.cheerup.demo.retrospective.ai
 
+import com.cheerup.demo.ai.client.AiServerException
+import com.cheerup.demo.ai.client.AiServerProperties
+import com.cheerup.demo.ai.client.AiServerTimeoutException
+import com.cheerup.demo.ai.client.callAiServer
 import org.springframework.stereotype.Component
-import org.springframework.web.client.ResourceAccessException
 import org.springframework.web.client.RestClient
-import org.springframework.web.client.RestClientException
-import org.springframework.web.client.RestClientResponseException
-import java.net.SocketTimeoutException
-import java.net.http.HttpTimeoutException
 
 @Component
 class ExternalRetrospectiveQuestionGenerator(
     private val restClient: RestClient,
-    private val properties: RetrospectiveAiProperties,
+    private val properties: AiServerProperties,
 ) : RetrospectiveQuestionGenerator {
 
     override fun generate(context: RetrospectiveQuestionContext): RetrospectiveQuestionGenerationResult {
@@ -25,25 +24,17 @@ class ExternalRetrospectiveQuestionGenerator(
         )
 
         val response = try {
+            callAiServer("AI retrospective question generation") {
             restClient.post()
-                .uri(properties.questionPath)
+                .uri(properties.retrospectiveQuestionsPath)
                 .body(request)
                 .retrieve()
                 .requiredBody(AiRetrospectiveQuestionsResponse::class.java)
-        } catch (ex: ResourceAccessException) {
-            if (ex.containsTimeout()) {
-                throw RetrospectiveQuestionTimeoutException("AI retrospective question generation timed out.", ex)
             }
-            throw RetrospectiveQuestionGenerationException("AI retrospective question generation request failed.", ex)
-        } catch (ex: RestClientResponseException) {
-            throw RetrospectiveQuestionGenerationException(
-                "AI retrospective question generation returned HTTP ${ex.statusCode.value()}.",
-                ex,
-            )
-        } catch (ex: RestClientException) {
-            throw RetrospectiveQuestionGenerationException("AI retrospective question generation response was invalid.", ex)
-        } catch (ex: RuntimeException) {
-            throw RetrospectiveQuestionGenerationException("AI retrospective question generation failed.", ex)
+        } catch (ex: AiServerTimeoutException) {
+            throw RetrospectiveQuestionTimeoutException(ex.message ?: "AI request timed out.", ex)
+        } catch (ex: AiServerException) {
+            throw RetrospectiveQuestionGenerationException(ex.message ?: "AI request failed.", ex)
         }
 
         return response.toResult()
@@ -85,21 +76,6 @@ class ExternalRetrospectiveQuestionGenerator(
         this?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: throw RetrospectiveQuestionGenerationException("Missing $fieldName.")
-
-    private fun Throwable.containsTimeout(): Boolean {
-        var current: Throwable? = this
-        while (current != null) {
-            if (current is SocketTimeoutException || current is HttpTimeoutException) {
-                return true
-            }
-            val message = current.message?.lowercase()
-            if (message?.contains("timeout") == true || message?.contains("timed out") == true) {
-                return true
-            }
-            current = current.cause
-        }
-        return false
-    }
 
     companion object {
         private const val MAX_QUESTION_LENGTH = 1000

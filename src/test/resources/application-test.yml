@@ -50,5 +50,5 @@ app:
 
 cheerup:
   ai:
-    retrospective:
-      base-url: http://ai-retrospective.test
+    server:
+      base-url: http://ai-server.test

@@ -38,6 +38,7 @@ class MailQueryService(
                     id = requireNotNull(it.id) { "Stage must be persisted" },
                     name = it.name,
                     category = it.category,
+                    order = it.displayOrder,
                 )
             }
 
