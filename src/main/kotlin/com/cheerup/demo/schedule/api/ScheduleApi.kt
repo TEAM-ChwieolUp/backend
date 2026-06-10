@@ -20,7 +20,7 @@ import org.springframework.http.ResponseEntity
         취업 이중 달력 API. 3가지 카테고리를 단일 달력 UI에 통합 표시합니다.
 
         **카테고리 분기**
-        - `JOB_POSTING` (채용공고 일정): 마감일/접수 시작/설명회. 보통 칸반 카드의 `deadlineAt` 동기화로 자동 생성됩니다. `applicationId` 필수.
+        - `JOB_POSTING` (채용공고 일정): 마감일/접수 시작/설명회. 보통 칸반 카드의 `deadlineAt` 동기화로 자동 생성됩니다. `applicationId` 선택.
         - `APPLICATION_PROCESS` (채용 전형): 면접/코딩테스트/발표. 사용자 또는 메일 분석으로 등록. `applicationId` 필수.
         - `PERSONAL` (개인 일정): 스터디/공부 등. `applicationId`는 null이어야 함.
 
@@ -89,7 +89,7 @@ interface ScheduleApi {
             **카테고리별 요청 규칙**
             - `APPLICATION_PROCESS` (면접/코테/발표): `applicationId` **필수**. 칸반 카드와 연결됩니다.
             - `PERSONAL` (개인 일정): `applicationId`는 **null이어야** 합니다. 보내면 `INVALID_INPUT`.
-            - `JOB_POSTING`: `applicationId` 필수. 같은 카드에 이미 `JOB_POSTING`이 있으면 409로 거부됩니다.
+            - `JOB_POSTING`: `applicationId` 선택. 카드와 연결한 경우 같은 카드에 이미 `JOB_POSTING`이 있으면 409로 거부됩니다.
               일반적인 채용 마감일은 본 API가 아닌 **칸반 카드의 `deadlineAt` 동기화로 자동 생성**되므로,
               본 API로 직접 만들 일은 드뭅니다 (접수 시작/설명회 같은 추가 일정 등록 시에만).
 
@@ -112,7 +112,7 @@ interface ScheduleApi {
             SwaggerErrorResponse(
                 ErrorCode.INVALID_INPUT,
                 description = "title 검증 실패, `endAt < startAt`, " +
-                    "PERSONAL인데 applicationId가 있거나 JOB_POSTING/APPLICATION_PROCESS인데 applicationId 누락 등. " +
+                    "PERSONAL인데 applicationId가 있거나 APPLICATION_PROCESS인데 applicationId 누락 등. " +
                     "프론트는 폼에서 카테고리 분기를 미리 검증해 사용자 혼란을 줄이세요.",
             ),
             SwaggerErrorResponse(
@@ -122,7 +122,7 @@ interface ScheduleApi {
             ),
             SwaggerErrorResponse(
                 ErrorCode.SCHEDULE_DUPLICATE_JOB_POSTING,
-                description = "이미 같은 카드에 JOB_POSTING 일정이 있습니다. " +
+                description = "카드와 연결한 JOB_POSTING 요청에서 이미 같은 카드에 JOB_POSTING 일정이 있습니다. " +
                     "프론트는 \"이 카드에는 이미 채용공고 일정이 있어요. 카드의 마감일을 수정해 주세요\" 안내.",
             ),
         ],

@@ -41,6 +41,7 @@ class NotificationCommandServiceTest {
 
         assertThat(notification.readAt).isEqualTo(now)
         assertThat(response.readAt).isEqualTo(now)
+        assertThat(response.isRead).isTrue()
     }
 
     @Test

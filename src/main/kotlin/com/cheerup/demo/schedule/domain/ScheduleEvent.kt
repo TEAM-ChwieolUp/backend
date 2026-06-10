@@ -32,6 +32,10 @@ class ScheduleEvent(
     @Column(nullable = false, length = 30)
     var category: ScheduleCategory,
 
+    @Enumerated(EnumType.STRING)
+    @Column(length = 40)
+    var origin: ScheduleEventOrigin? = ScheduleEventOrigin.USER,
+
     @Column(nullable = false, length = 200)
     var title: String,
 
@@ -51,4 +55,6 @@ class ScheduleEvent(
         this.startAt = startAt
         this.endAt = endAt
     }
+
+    fun notificationAt(): Instant = endAt ?: startAt
 }

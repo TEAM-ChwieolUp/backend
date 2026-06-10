@@ -4,6 +4,7 @@ import com.cheerup.demo.notification.service.NoOpNotificationQueue
 import com.cheerup.demo.notification.service.NotificationQueue
 import com.cheerup.demo.schedule.domain.ScheduleCategory
 import com.cheerup.demo.schedule.domain.ScheduleEvent
+import com.cheerup.demo.schedule.domain.ScheduleEventOrigin
 import com.cheerup.demo.schedule.repository.ScheduleEventRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -44,11 +45,18 @@ class DefaultScheduleSyncService(
         companyName: String,
         deadlineAt: Instant?,
     ) {
-        val existing = scheduleEventRepository.findByUserIdAndApplicationIdAndCategory(
+        val existing = scheduleEventRepository.findByUserIdAndApplicationIdAndOrigin(
+            userId = userId,
+            applicationId = applicationId,
+            origin = ScheduleEventOrigin.APPLICATION_DEADLINE,
+        ) ?: scheduleEventRepository.findByUserIdAndApplicationIdAndCategory(
             userId = userId,
             applicationId = applicationId,
             category = ScheduleCategory.JOB_POSTING,
-        )
+        )?.also { legacy ->
+            legacy.category = ScheduleCategory.APPLICATION_PROCESS
+            legacy.origin = ScheduleEventOrigin.APPLICATION_DEADLINE
+        }
 
         when {
             deadlineAt == null && existing == null -> Unit
@@ -62,8 +70,9 @@ class DefaultScheduleSyncService(
                     ScheduleEvent(
                         userId = userId,
                         applicationId = applicationId,
-                        category = ScheduleCategory.JOB_POSTING,
-                        title = jobPostingTitle(companyName),
+                        category = ScheduleCategory.APPLICATION_PROCESS,
+                        origin = ScheduleEventOrigin.APPLICATION_DEADLINE,
+                        title = applicationDeadlineTitle(companyName),
                         startAt = deadlineAt,
                         endAt = null,
                     ),
@@ -71,7 +80,9 @@ class DefaultScheduleSyncService(
             }
 
             deadlineAt != null && existing != null -> {
-                existing.title = jobPostingTitle(companyName)
+                existing.category = ScheduleCategory.APPLICATION_PROCESS
+                existing.origin = ScheduleEventOrigin.APPLICATION_DEADLINE
+                existing.title = applicationDeadlineTitle(companyName)
                 existing.reschedule(startAt = deadlineAt, endAt = null)
             }
         }
@@ -87,6 +98,6 @@ class DefaultScheduleSyncService(
         }
     }
 
-    private fun jobPostingTitle(companyName: String): String =
+    private fun applicationDeadlineTitle(companyName: String): String =
         "$companyName 채용 마감"
 }

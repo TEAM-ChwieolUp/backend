@@ -77,6 +77,11 @@ enum class ErrorCode(
         "SCHEDULE_JOB_POSTING_LOCKED",
         "이 일정을 삭제하기 전에 지원 마감일을 먼저 비워주세요.",
     ),
+    SCHEDULE_APPLICATION_DEADLINE_LOCKED(
+        HttpStatus.CONFLICT,
+        "SCHEDULE_APPLICATION_DEADLINE_LOCKED",
+        "이 일정을 삭제하기 전에 지원 마감일을 먼저 비워주세요.",
+    ),
 
     NOTIFICATION_NOT_FOUND(HttpStatus.NOT_FOUND, "NOTIFICATION_NOT_FOUND", "알림을 찾을 수 없습니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "서버 오류가 발생했습니다."),

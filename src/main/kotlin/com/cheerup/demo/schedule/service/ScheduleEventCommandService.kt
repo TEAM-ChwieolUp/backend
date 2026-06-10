@@ -7,6 +7,7 @@ import com.cheerup.demo.notification.service.NoOpNotificationQueue
 import com.cheerup.demo.notification.service.NotificationQueue
 import com.cheerup.demo.schedule.domain.ScheduleCategory
 import com.cheerup.demo.schedule.domain.ScheduleEvent
+import com.cheerup.demo.schedule.domain.ScheduleEventOrigin
 import com.cheerup.demo.schedule.dto.CreateScheduleEventRequest
 import com.cheerup.demo.schedule.dto.ScheduleEventResponse
 import com.cheerup.demo.schedule.dto.UpdateScheduleEventRequest
@@ -34,9 +35,10 @@ class ScheduleEventCommandService(
         validateApplicationReference(userId, request.category, request.applicationId)
 
         if (request.category == ScheduleCategory.JOB_POSTING &&
+            request.applicationId != null &&
             scheduleEventRepository.existsByUserIdAndApplicationIdAndCategory(
                 userId = userId,
-                applicationId = requireNotNull(request.applicationId),
+                applicationId = request.applicationId,
                 category = ScheduleCategory.JOB_POSTING,
             )
         ) {
@@ -60,7 +62,7 @@ class ScheduleEventCommandService(
         notificationQueue.enqueueScheduleEvent(
             userId = userId,
             eventId = eventId,
-            startAt = saved.startAt,
+            startAt = saved.notificationAt(),
         )
 
         return saved.toScheduleEventResponse()
@@ -73,6 +75,7 @@ class ScheduleEventCommandService(
         request: UpdateScheduleEventRequest,
     ): ScheduleEventResponse {
         val event = findOwnedEvent(userId, eventId)
+        val previousNotificationAt = event.notificationAt()
 
         val nextStartAt = request.startAt ?: event.startAt
         val nextEndAt = request.endAt ?: event.endAt
@@ -82,11 +85,11 @@ class ScheduleEventCommandService(
         if (request.startAt != null || request.endAt != null) {
             event.reschedule(nextStartAt, nextEndAt)
         }
-        if (request.startAt != null) {
+        if (event.notificationAt() != previousNotificationAt) {
             notificationQueue.updateScheduleEvent(
                 userId = userId,
                 eventId = eventId,
-                startAt = event.startAt,
+                startAt = event.notificationAt(),
             )
         }
 
@@ -97,9 +100,9 @@ class ScheduleEventCommandService(
     fun delete(userId: Long, eventId: Long) {
         val event = findOwnedEvent(userId, eventId)
 
-        if (event.category == ScheduleCategory.JOB_POSTING && hasLinkedApplicationDeadline(userId, event)) {
+        if (event.origin == ScheduleEventOrigin.APPLICATION_DEADLINE && hasLinkedApplicationDeadline(userId, event)) {
             throw BusinessException(
-                ErrorCode.SCHEDULE_JOB_POSTING_LOCKED,
+                ErrorCode.SCHEDULE_APPLICATION_DEADLINE_LOCKED,
                 detail = "eventId=$eventId, applicationId=${event.applicationId}",
             )
         }
@@ -127,9 +130,14 @@ class ScheduleEventCommandService(
                 }
             }
 
-            ScheduleCategory.JOB_POSTING,
-            ScheduleCategory.APPLICATION_PROCESS,
-            -> {
+            ScheduleCategory.JOB_POSTING -> {
+                if (applicationId != null) {
+                    applicationRepository.findByIdAndUserId(applicationId, userId)
+                        ?: throw BusinessException(ErrorCode.APPLICATION_NOT_FOUND, detail = "applicationId=$applicationId")
+                }
+            }
+
+            ScheduleCategory.APPLICATION_PROCESS -> {
                 if (applicationId == null) {
                     invalidInput("$category schedule requires applicationId")
                 }

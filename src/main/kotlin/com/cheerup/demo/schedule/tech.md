@@ -11,7 +11,7 @@
 ### In Scope (이 도메인이 책임짐)
 - `ScheduleEvent` 단일 엔티티의 영속화·조회·변경
 - 월별 달력 조회 — 3가지 카테고리(`JOB_POSTING` / `APPLICATION_PROCESS` / `PERSONAL`) 통합 응답
-- 일정 직접 등록 (`APPLICATION_PROCESS` / `PERSONAL`) 및 메일 추출 결과 수락 시 등록
+- 일정 직접 등록 (`JOB_POSTING` / `APPLICATION_PROCESS` / `PERSONAL`) 및 메일 추출 결과 수락 시 등록
 - `Application.deadlineAt` 변경에 대응하는 `JOB_POSTING` row 동기화 (`application/`이 호출하는 내부 인터페이스 제공)
 - `Application` 삭제 시 연결된 `ScheduleEvent` 일괄 정리 + 알림 큐 비움
 - iCalendar(`.ics`) 일회성 다운로드 export
@@ -52,13 +52,14 @@
 | `schedule_events(user_id, category, start_at)` | 카테고리 필터 + 기간 조건 |
 | `schedule_events(application_id)` | `Application` 삭제 시 일괄 조회, `deadlineAt` 동기화 시 lookup |
 
-### 2.2 v1 sync 규칙 — JOB_POSTING은 Application당 1개
+### 2.2 v1 sync 규칙 — 카드 연결 JOB_POSTING은 Application당 1개
 
 `Application.deadlineAt`(칸반 원본)과 `JOB_POSTING` `ScheduleEvent`(달력 표시)를 단일 트랜잭션으로 동기화한다. v1은 **한 Application당 최대 1개의 JOB_POSTING row**만 허용해 sync 식별 문제를 단순화한다.
 
 - 동기화 대상 row 식별: `(application_id, category=JOB_POSTING)` 단일행 lookup
 - 사용자/AI가 같은 Application에 두 번째 `JOB_POSTING`을 만들려 하면 **`SCHEDULE_DUPLICATE_JOB_POSTING` (409)**
-- 추가 채용공고 일정(설명회·접수 시작 등)을 v1에 표현하려면 카테고리를 `APPLICATION_PROCESS`로 등록 (UX 가이드)
+- `applicationId = null`인 독립 `JOB_POSTING`은 특정 지원 카드에 종속되지 않으므로 중복 제한 대상이 아니다.
+- 추가 채용공고 일정(설명회·접수 시작 등)은 카드 연결이 필요 없으면 `applicationId = null`인 `JOB_POSTING`으로 등록한다.
 - v2 후보(§12): `kind` 컬럼(DEADLINE/EXPLAINER/...)으로 다중 JOB_POSTING 허용
 
 ### Soft delete
@@ -147,12 +148,13 @@
 **검증**
 - `category`: enum 필수
 - `applicationId`:
-  - `JOB_POSTING` / `APPLICATION_PROCESS` → **필수**, 요청자 소유 Application이어야 함
+  - `JOB_POSTING` → 선택. 값이 있으면 요청자 소유 Application이어야 함
+  - `APPLICATION_PROCESS` → **필수**, 요청자 소유 Application이어야 함
   - `PERSONAL` → null 강제 (값이 있으면 `INVALID_INPUT`)
 - `title`: NotBlank, 1..200자
 - `startAt`: 필수
 - `endAt`: 옵셔널, `startAt`보다 같거나 이후 (`INVALID_INPUT`)
-- `JOB_POSTING` 등록 시 동일 `applicationId`에 이미 `JOB_POSTING`이 있으면 **`SCHEDULE_DUPLICATE_JOB_POSTING` (409)**
+- `applicationId`가 있는 `JOB_POSTING` 등록 시 동일 `applicationId`에 이미 `JOB_POSTING`이 있으면 **`SCHEDULE_DUPLICATE_JOB_POSTING` (409)**
 
 **응답 201**: 등록된 단일 `ScheduleEventResponse`.
 
@@ -297,9 +299,10 @@ POST /api/schedule/events  body: { category: APPLICATION_PROCESS, applicationId:
    ↓
 Service (@Transactional)
   ├─ category 따라 applicationId 검증
-  │     - JOB_POSTING/APPLICATION_PROCESS: applicationRepository.existsByIdAndUserId(applicationId, userId) 검증
+  │     - JOB_POSTING: applicationId가 있으면 applicationRepository.existsByIdAndUserId(applicationId, userId) 검증
+  │     - APPLICATION_PROCESS: applicationRepository.existsByIdAndUserId(applicationId, userId) 검증
   │     - PERSONAL: applicationId가 null인지 검증
-  ├─ JOB_POSTING이면 동일 applicationId로 이미 존재하는지 확인 → 있으면 SCHEDULE_DUPLICATE_JOB_POSTING
+  ├─ applicationId가 있는 JOB_POSTING이면 동일 applicationId로 이미 존재하는지 확인 → 있으면 SCHEDULE_DUPLICATE_JOB_POSTING
   ├─ ScheduleEvent 생성·save
   └─ notificationQueue.enqueueScheduleEvent(userId, eventId, startAt)
    ↓
@@ -333,12 +336,12 @@ Controller: ResponseEntity.ok()
 |---|---|---|
 | `from`, `to` | 필수, ISO-8601, `to - from ≤ 100일`, `from < to` | `INVALID_INPUT` |
 | `category` (enum) | 정의된 값 | `INVALID_INPUT` |
-| `category` (POST) | JOB_POSTING/APPLICATION_PROCESS → applicationId 필수, PERSONAL → null | `INVALID_INPUT` |
+| `category` (POST) | JOB_POSTING → applicationId 선택, APPLICATION_PROCESS → applicationId 필수, PERSONAL → null | `INVALID_INPUT` |
 | `applicationId` | 요청자 소유 | `APPLICATION_NOT_FOUND` (404) |
 | `title` | NotBlank, 1..200 | `INVALID_INPUT` |
 | `startAt` | 필수 | `INVALID_INPUT` |
 | `endAt` | nullable, `endAt ≥ startAt` | `INVALID_INPUT` |
-| JOB_POSTING 중복 | 동일 applicationId의 JOB_POSTING 존재 시 거절 | `SCHEDULE_DUPLICATE_JOB_POSTING` (409) |
+| JOB_POSTING 중복 | applicationId가 있을 때 동일 applicationId의 JOB_POSTING 존재 시 거절 | `SCHEDULE_DUPLICATE_JOB_POSTING` (409) |
 | JOB_POSTING DELETE | `Application.deadlineAt`이 NOT NULL인 동안은 거절 | `SCHEDULE_JOB_POSTING_LOCKED` (409) |
 
 ---
@@ -372,7 +375,7 @@ SCHEDULE_JOB_POSTING_LOCKED(CONFLICT, "SCHEDULE_JOB_POSTING_LOCKED", "지원 카
 |---|---|---|
 | `Application.deadlineAt` 두 탭 동시 변경 | 두 sync 호출이 같은 row를 update — 마지막 쓰기 승, 알림 큐는 마지막 값으로 정리 | 허용. 비즈니스 영향 없음 (마지막 값이 정답) |
 | 같은 Application에 두 사용자가 JOB_POSTING POST 동시 | 둘 다 통과 후 두 row 생성 | Service 검사가 race이지만, v1은 `applicationId` 소유자 단일이라 동시 발생 불가 |
-| 메일 추출 결과 수락과 사용자 직접 등록 충돌 | 같은 Application JOB_POSTING 두 row | `SCHEDULE_DUPLICATE_JOB_POSTING`로 두 번째가 거절. 사용자 UX는 "기존 일정을 수정하시겠습니까?" 안내 (프론트 책임) |
+| 메일 추출 결과 수락과 사용자 직접 등록 충돌 | 같은 Application에 연결된 JOB_POSTING 두 row | `SCHEDULE_DUPLICATE_JOB_POSTING`로 두 번째가 거절. 사용자 UX는 "기존 일정을 수정하시겠습니까?" 안내 (프론트 책임) |
 | 일정 PATCH와 Application 삭제 동시 | PATCH 후 사라짐 | 데이터 손실 없음 — Application 삭제가 마지막 작업이므로 트랜잭션 격리로 충분 |
 
 `SELECT FOR UPDATE`는 v1에서 도입하지 않음. 사용자당 동시 요청 빈도가 낮음.
@@ -397,7 +400,8 @@ SCHEDULE_JOB_POSTING_LOCKED(CONFLICT, "SCHEDULE_JOB_POSTING_LOCKED", "지원 카
 
 - `getCalendar`: from-to > 100일 → `INVALID_INPUT`
 - `getCalendar`: 카테고리 필터링 — 단일/다중/미지정 모두 검증
-- `create` JOB_POSTING: 동일 applicationId 기존 row 있으면 `SCHEDULE_DUPLICATE_JOB_POSTING`
+- `create` JOB_POSTING: applicationId 없이 등록 가능
+- `create` JOB_POSTING: applicationId가 있고 동일 applicationId 기존 row 있으면 `SCHEDULE_DUPLICATE_JOB_POSTING`
 - `create` APPLICATION_PROCESS: applicationId가 다른 사용자 소유 → `APPLICATION_NOT_FOUND`
 - `create` PERSONAL: applicationId 값이 있으면 `INVALID_INPUT`
 - `update`: category/applicationId는 무시되는지 (요청 보내도 변경 안 됨)
