@@ -10,15 +10,27 @@ class NotificationReminderCalculator {
     fun futureReminders(
         scheduledAt: Instant,
         now: Instant,
-    ): List<NotificationReminder> =
-        NotificationRemindType.entries
-            .map { remindType ->
-                NotificationReminder(
-                    remindType = remindType,
-                    triggerAt = scheduledAt.minus(remindType.offset),
-                )
+    ): List<NotificationReminder> {
+        if (!scheduledAt.isAfter(now)) {
+            return emptyList()
+        }
+
+        val remindTypes = NotificationRemindType.entries
+        return remindTypes
+            .mapIndexedNotNull { index, remindType ->
+                val thresholdAt = scheduledAt.minus(remindType.offset)
+                val nextThresholdAt = remindTypes
+                    .getOrNull(index + 1)
+                    ?.let { nextType -> scheduledAt.minus(nextType.offset) }
+                    ?: scheduledAt
+
+                when {
+                    thresholdAt.isAfter(now) -> NotificationReminder(remindType, thresholdAt)
+                    now.isBefore(nextThresholdAt) -> NotificationReminder(remindType, now)
+                    else -> null
+                }
             }
-            .filter { it.triggerAt.isAfter(now) }
+    }
 }
 
 data class NotificationReminder(
