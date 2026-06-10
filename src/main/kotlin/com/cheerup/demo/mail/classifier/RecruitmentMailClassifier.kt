@@ -10,12 +10,14 @@ interface RecruitmentMailClassifier {
 data class RecruitmentMailClassificationCommand(
     val message: MailMessageCandidate,
     val stages: List<StageCandidate>,
+    val mailBody: String = message.snippet,
 )
 
 data class StageCandidate(
     val id: Long,
     val name: String,
     val category: StageCategory,
+    val order: Int? = null,
 )
 
 data class RecruitmentMailClassificationResult(
@@ -25,4 +27,6 @@ data class RecruitmentMailClassificationResult(
     val recommendedStageName: String?,
     val confidence: Double,
     val reason: String,
+    val evidence: List<String> = emptyList(),
+    val needsUserConfirmation: Boolean = true,
 )

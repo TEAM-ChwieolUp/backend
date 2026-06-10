@@ -23,4 +23,13 @@ class NaverMailClient : MailClient {
             detail = "Naver MailClient is not implemented yet.",
         )
     }
+
+    override fun getMessageContent(
+        integration: MailIntegrationContext,
+        messageId: String,
+    ): MailMessageContent =
+        throw BusinessException(
+            ErrorCode.MAIL_CLIENT_NOT_CONFIGURED,
+            detail = "Naver MailClient is not implemented yet.",
+        )
 }

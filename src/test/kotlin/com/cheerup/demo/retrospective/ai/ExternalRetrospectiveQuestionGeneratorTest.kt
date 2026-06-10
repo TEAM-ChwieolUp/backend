@@ -1,5 +1,6 @@
 package com.cheerup.demo.retrospective.ai
 
+import com.cheerup.demo.ai.client.AiServerProperties
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach
@@ -23,13 +24,13 @@ class ExternalRetrospectiveQuestionGeneratorTest {
 
     private lateinit var server: MockRestServiceServer
     private lateinit var generator: ExternalRetrospectiveQuestionGenerator
-    private lateinit var properties: RetrospectiveAiProperties
+    private lateinit var properties: AiServerProperties
 
     @BeforeEach
     fun setUp() {
-        properties = RetrospectiveAiProperties().apply {
+        properties = AiServerProperties().apply {
             baseUrl = "https://ai.example.com"
-            questionPath = "/custom/retrospective/questions"
+            retrospectiveQuestionsPath = "/custom/retrospective/questions"
         }
         val builder = RestClient.builder().baseUrl(properties.requiredBaseUrl())
         server = MockRestServiceServer.bindTo(builder).build()

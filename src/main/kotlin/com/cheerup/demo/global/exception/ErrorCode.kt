@@ -66,6 +66,10 @@ enum class ErrorCode(
     ),
     AI_GENERATION_FAILED(HttpStatus.BAD_GATEWAY, "AI_GENERATION_FAILED", "AI 응답 생성에 실패했습니다."),
     AI_GENERATION_TIMEOUT(HttpStatus.GATEWAY_TIMEOUT, "AI_GENERATION_TIMEOUT", "AI 응답 생성이 시간 내에 완료되지 않았습니다."),
+    SUGGESTION_NOT_FOUND(HttpStatus.NOT_FOUND, "SUGGESTION_NOT_FOUND", "AI 제안을 찾을 수 없습니다."),
+    SUGGESTION_NOT_ACTIONABLE(HttpStatus.CONFLICT, "SUGGESTION_NOT_ACTIONABLE", "적용할 수 없는 AI 제안입니다."),
+    SUGGESTION_ALREADY_PROCESSED(HttpStatus.CONFLICT, "SUGGESTION_ALREADY_PROCESSED", "이미 처리된 AI 제안입니다."),
+    SUGGESTION_STALE(HttpStatus.CONFLICT, "SUGGESTION_STALE", "현재 카드 상태가 제안 생성 시점과 달라 적용할 수 없습니다."),
     SCHEDULE_NOT_FOUND(HttpStatus.NOT_FOUND, "SCHEDULE_NOT_FOUND", "일정을 찾을 수 없습니다."),
     SCHEDULE_DUPLICATE_JOB_POSTING(
         HttpStatus.CONFLICT,

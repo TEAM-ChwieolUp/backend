@@ -30,6 +30,8 @@ data class MailClassificationResponse(
     val recommendedStageName: String?,
     val confidence: Double,
     val reason: String,
+    val evidence: List<String>,
+    val needsUserConfirmation: Boolean,
 )
 
 fun MailMessageCandidate.toResponse(
@@ -52,5 +54,7 @@ fun MailMessageCandidate.toResponse(
             recommendedStageName = classification.recommendedStageName,
             confidence = classification.confidence,
             reason = classification.reason,
+            evidence = classification.evidence,
+            needsUserConfirmation = classification.needsUserConfirmation,
         ),
     )

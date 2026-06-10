@@ -21,6 +21,15 @@ class StubGoogleMailClient : MailClient {
         return sampleMessages(integration).take(limit.coerceIn(1, MAX_LIMIT))
     }
 
+    override fun getMessageContent(
+        integration: MailIntegrationContext,
+        messageId: String,
+    ): MailMessageContent {
+        val message = sampleMessages(integration).firstOrNull { it.messageId == messageId }
+            ?: throw IllegalArgumentException("Unknown stub messageId=$messageId")
+        return MailMessageContent(subject = message.subject, body = message.snippet)
+    }
+
     companion object {
         private const val MAX_LIMIT = 50
 

@@ -55,8 +55,10 @@
 | Method | Path | 설명 | 권한 |
 |--------|------|------|------|
 | POST | `/api/auth/oauth/{provider}` | Gmail/Outlook OAuth 연결 | USER |
+| POST | `/api/mail/suggestions/analyze` | 선택한 메일·카드 AI 분석 및 이동 제안 생성 | USER |
 | GET | `/api/mail/suggestions` | AI 분석 결과 기반 업데이트 제안 목록 | USER |
-| POST | `/api/mail/suggestions/{id}/accept` | 제안 수락 → 칸반/달력 자동 반영 | USER |
+| POST | `/api/mail/suggestions/{id}/accept` | 제안 수락 → 칸반 단계 반영 | USER |
+| POST | `/api/mail/suggestions/{id}/reject` | 제안 거절 (데이터 변경 없음) | USER |
 
 #### 인증 (`/api/auth`)
 | Method | Path | 설명 | 권한 |
