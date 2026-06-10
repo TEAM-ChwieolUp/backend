@@ -3,6 +3,7 @@ package com.cheerup.demo.schedule.service
 import com.cheerup.demo.notification.service.NotificationQueue
 import com.cheerup.demo.schedule.domain.ScheduleCategory
 import com.cheerup.demo.schedule.domain.ScheduleEvent
+import com.cheerup.demo.schedule.domain.ScheduleEventOrigin
 import com.cheerup.demo.schedule.repository.ScheduleEventRepository
 import io.mockk.every
 import io.mockk.mockk
@@ -34,10 +35,17 @@ class ScheduleSyncServiceTest {
     }
 
     @Test
-    fun `syncApplicationDeadline creates JOB_POSTING event without schedule notification`() {
+    fun `syncApplicationDeadline creates APPLICATION_PROCESS event without schedule notification`() {
         val deadlineAt = Instant.parse("2026-06-10T09:00:00Z")
         val savedSlot = slot<ScheduleEvent>()
 
+        every {
+            scheduleEventRepository.findByUserIdAndApplicationIdAndOrigin(
+                userId = userId,
+                applicationId = applicationId,
+                origin = ScheduleEventOrigin.APPLICATION_DEADLINE,
+            )
+        } returns null
         every {
             scheduleEventRepository.findByUserIdAndApplicationIdAndCategory(
                 userId = userId,
@@ -51,17 +59,52 @@ class ScheduleSyncServiceTest {
 
         assertThat(savedSlot.captured.userId).isEqualTo(userId)
         assertThat(savedSlot.captured.applicationId).isEqualTo(applicationId)
-        assertThat(savedSlot.captured.category).isEqualTo(ScheduleCategory.JOB_POSTING)
+        assertThat(savedSlot.captured.category).isEqualTo(ScheduleCategory.APPLICATION_PROCESS)
+        assertThat(savedSlot.captured.origin).isEqualTo(ScheduleEventOrigin.APPLICATION_DEADLINE)
         assertThat(savedSlot.captured.startAt).isEqualTo(deadlineAt)
         verify(exactly = 0) { notificationQueue.enqueueScheduleEvent(any(), any(), any()) }
         verify(exactly = 0) { notificationQueue.updateScheduleEvent(any(), any(), any()) }
     }
 
     @Test
-    fun `syncApplicationDeadline updates JOB_POSTING event without schedule notification`() {
+    fun `syncApplicationDeadline updates APPLICATION_PROCESS event without schedule notification`() {
+        val event = fixtureEvent(
+            id = 501L,
+            category = ScheduleCategory.APPLICATION_PROCESS,
+            origin = ScheduleEventOrigin.APPLICATION_DEADLINE,
+            startAt = Instant.parse("2026-06-10T09:00:00Z"),
+        )
+        val nextDeadlineAt = Instant.parse("2026-07-10T09:00:00Z")
+
+        every {
+            scheduleEventRepository.findByUserIdAndApplicationIdAndOrigin(
+                userId = userId,
+                applicationId = applicationId,
+                origin = ScheduleEventOrigin.APPLICATION_DEADLINE,
+            )
+        } returns event
+
+        service.syncApplicationDeadline(userId, applicationId, "Toss", nextDeadlineAt)
+
+        assertThat(event.category).isEqualTo(ScheduleCategory.APPLICATION_PROCESS)
+        assertThat(event.origin).isEqualTo(ScheduleEventOrigin.APPLICATION_DEADLINE)
+        assertThat(event.startAt).isEqualTo(nextDeadlineAt)
+        verify(exactly = 0) { notificationQueue.enqueueScheduleEvent(any(), any(), any()) }
+        verify(exactly = 0) { notificationQueue.updateScheduleEvent(any(), any(), any()) }
+    }
+
+    @Test
+    fun `syncApplicationDeadline migrates legacy JOB_POSTING event to APPLICATION_PROCESS`() {
         val event = fixtureEvent(id = 501L, startAt = Instant.parse("2026-06-10T09:00:00Z"))
         val nextDeadlineAt = Instant.parse("2026-07-10T09:00:00Z")
 
+        every {
+            scheduleEventRepository.findByUserIdAndApplicationIdAndOrigin(
+                userId = userId,
+                applicationId = applicationId,
+                origin = ScheduleEventOrigin.APPLICATION_DEADLINE,
+            )
+        } returns null
         every {
             scheduleEventRepository.findByUserIdAndApplicationIdAndCategory(
                 userId = userId,
@@ -72,6 +115,8 @@ class ScheduleSyncServiceTest {
 
         service.syncApplicationDeadline(userId, applicationId, "Toss", nextDeadlineAt)
 
+        assertThat(event.category).isEqualTo(ScheduleCategory.APPLICATION_PROCESS)
+        assertThat(event.origin).isEqualTo(ScheduleEventOrigin.APPLICATION_DEADLINE)
         assertThat(event.startAt).isEqualTo(nextDeadlineAt)
         verify(exactly = 0) { notificationQueue.enqueueScheduleEvent(any(), any(), any()) }
         verify(exactly = 0) { notificationQueue.updateScheduleEvent(any(), any(), any()) }
@@ -79,13 +124,18 @@ class ScheduleSyncServiceTest {
 
     @Test
     fun `syncApplicationDeadline removes stale schedule notification when deadline is cleared`() {
-        val event = fixtureEvent(id = 501L, startAt = Instant.parse("2026-06-10T09:00:00Z"))
+        val event = fixtureEvent(
+            id = 501L,
+            category = ScheduleCategory.APPLICATION_PROCESS,
+            origin = ScheduleEventOrigin.APPLICATION_DEADLINE,
+            startAt = Instant.parse("2026-06-10T09:00:00Z"),
+        )
 
         every {
-            scheduleEventRepository.findByUserIdAndApplicationIdAndCategory(
+            scheduleEventRepository.findByUserIdAndApplicationIdAndOrigin(
                 userId = userId,
                 applicationId = applicationId,
-                category = ScheduleCategory.JOB_POSTING,
+                origin = ScheduleEventOrigin.APPLICATION_DEADLINE,
             )
         } returns event
 
@@ -117,12 +167,14 @@ class ScheduleSyncServiceTest {
     private fun fixtureEvent(
         id: Long,
         category: ScheduleCategory = ScheduleCategory.JOB_POSTING,
+        origin: ScheduleEventOrigin? = ScheduleEventOrigin.USER,
         startAt: Instant,
     ): ScheduleEvent {
         val event = ScheduleEvent(
             userId = userId,
             applicationId = applicationId,
             category = category,
+            origin = origin,
             title = "Toss 채용 마감",
             startAt = startAt,
             endAt = null,

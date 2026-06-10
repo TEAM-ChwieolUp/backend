@@ -76,6 +76,36 @@ class ScheduleEventCommandServiceTest {
     }
 
     @Test
+    fun `create enqueues schedule event reminder by endAt when present`() {
+        val startAt = Instant.parse("2026-06-10T10:00:00Z")
+        val endAt = Instant.parse("2026-06-10T18:00:00Z")
+
+        every { scheduleEventRepository.save(any<ScheduleEvent>()) } answers {
+            firstArg<ScheduleEvent>().also {
+                ReflectionTestUtils.setField(it, "id", eventId)
+            }
+        }
+
+        service.create(
+            userId = userId,
+            request = CreateScheduleEventRequest(
+                category = ScheduleCategory.PERSONAL,
+                title = "Study",
+                startAt = startAt,
+                endAt = endAt,
+            ),
+        )
+
+        verify(exactly = 1) {
+            notificationQueue.enqueueScheduleEvent(
+                userId = userId,
+                eventId = eventId,
+                startAt = endAt,
+            )
+        }
+    }
+
+    @Test
     fun `create allows JOB_POSTING without applicationId`() {
         val startAt = Instant.parse("2026-06-10T09:00:00Z")
         val savedSlot = slot<ScheduleEvent>()
@@ -205,6 +235,32 @@ class ScheduleEventCommandServiceTest {
     }
 
     @Test
+    fun `update enqueues schedule event update when endAt changes notification time`() {
+        val event = fixtureEvent(
+            startAt = Instant.parse("2026-06-10T09:00:00Z"),
+            endAt = Instant.parse("2026-06-10T10:00:00Z"),
+        )
+        val nextEndAt = Instant.parse("2026-06-10T18:00:00Z")
+
+        every { scheduleEventRepository.findByIdAndUserId(eventId, userId) } returns event
+
+        service.update(
+            userId = userId,
+            eventId = eventId,
+            request = UpdateScheduleEventRequest(endAt = nextEndAt),
+        )
+
+        assertThat(event.endAt).isEqualTo(nextEndAt)
+        verify(exactly = 1) {
+            notificationQueue.updateScheduleEvent(
+                userId = userId,
+                eventId = eventId,
+                startAt = nextEndAt,
+            )
+        }
+    }
+
+    @Test
     fun `delete removes schedule event reminder before deleting event`() {
         val event = fixtureEvent(startAt = Instant.parse("2026-06-10T09:00:00Z"))
 
@@ -218,14 +274,17 @@ class ScheduleEventCommandServiceTest {
         }
     }
 
-    private fun fixtureEvent(startAt: Instant): ScheduleEvent {
+    private fun fixtureEvent(
+        startAt: Instant,
+        endAt: Instant? = null,
+    ): ScheduleEvent {
         val event = ScheduleEvent(
             userId = userId,
             applicationId = null,
             category = ScheduleCategory.PERSONAL,
             title = "Study",
             startAt = startAt,
-            endAt = null,
+            endAt = endAt,
         )
         ReflectionTestUtils.setField(event, "id", eventId)
         return event

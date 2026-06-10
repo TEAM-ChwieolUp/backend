@@ -19,6 +19,7 @@ data class NotificationResponse(
     val message: String,
     val scheduledAt: Instant,
     val readAt: Instant?,
+    val isRead: Boolean,
     val createdAt: Instant,
 )
 
@@ -40,5 +41,6 @@ fun Notification.toResponse(): NotificationResponse =
         message = message,
         scheduledAt = scheduledAt,
         readAt = readAt,
+        isRead = readAt != null,
         createdAt = createdAt,
     )
